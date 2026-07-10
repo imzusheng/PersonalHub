@@ -80,14 +80,21 @@ function loadPersistedTasks(userData: string): void {
   if (!fs.existsSync(tasksPath)) return;
   try {
     const lines = fs.readFileSync(tasksPath, 'utf-8').split('\n').filter(Boolean);
-    let restored = 0;
+    const latest = new Map<string, Record<string, unknown>>();
     for (const line of lines.slice(-500)) {
       try {
         const parsed: unknown = JSON.parse(line);
         if (typeof parsed !== 'object' || parsed === null) continue;
         const task = parsed as Record<string, unknown>;
-        if (typeof task.taskId === 'string' && typeof task.capability === 'string') {
-          const existing = hub.taskStore.findById(task.taskId);
+        if (typeof task.taskId === 'string') {
+          if (!latest.has(task.taskId)) latest.set(task.taskId, task);
+        }
+      } catch { /* skip invalid line */ }
+    }
+    let restored = 0;
+    for (const task of latest.values()) {
+      if (typeof task.taskId !== 'string' || typeof task.capability !== 'string') continue;
+      const existing = hub.taskStore.findById(task.taskId);
           if (existing) {
             if (task.status && task.status !== existing.status) {
               hub.taskStore.update(task.taskId, {
@@ -111,8 +118,6 @@ function loadPersistedTasks(userData: string): void {
             });
           }
           restored += 1;
-        }
-      } catch { /* skip invalid line */ }
     }
     if (restored > 0) fileLog(`persisted tasks: restored ${restored}`);
   } catch (err) {
