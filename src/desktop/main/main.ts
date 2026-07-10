@@ -86,7 +86,16 @@ function loadPersistedTasks(userData: string): void {
         const task = parsed as Record<string, unknown>;
         if (typeof task.taskId === 'string' && typeof task.capability === 'string') {
           const existing = hub.taskStore.findById(task.taskId);
-          if (existing) continue;
+          if (existing) {
+            if (task.status && task.status !== existing.status) {
+              hub.taskStore.update(task.taskId, {
+                status: task.status as 'queued' | 'running' | 'succeeded' | 'failed',
+                output: task.output as unknown,
+                error: task.error as { message: string; details?: unknown } | null,
+              });
+            }
+            continue;
+          }
           hub.taskStore.create({
             capability: task.capability as string,
             pluginId: (task.pluginId as string) || '',
