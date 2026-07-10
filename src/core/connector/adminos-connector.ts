@@ -82,6 +82,13 @@ export class AdminOSConnector implements Connector {
     });
   }
 
+  async syncPluginServices(serviceIds: string[]): Promise<void> {
+    await this.request(`/api/hosts/${this.hostIdPath}/services/sync`, {
+      method: 'POST',
+      body: { keep: serviceIds },
+    });
+  }
+
   async registerHost(snapshot: HostSnapshot): Promise<void> {
     await this.request('/api/hosts/register', {
       method: 'POST',

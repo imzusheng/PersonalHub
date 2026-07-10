@@ -30,6 +30,8 @@ let agentIntervalMs = 30_000;
 let userConfig: UserConfig | null = null;
 let updateService: UpdateService | null = null;
 
+const PERSONALHUB_SERVICE_ID = 'personalhub-agent';
+
 const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 
 function loadPlugins(pluginsDir: string): void {
@@ -167,9 +169,17 @@ async function bootstrap(): Promise<void> {
 
   loadPlugins(path.join(app.getPath('userData'), 'plugins'));
   if (connector instanceof AdminOSConnector) {
+    const serviceIds: string[] = [];
     for (const plugin of hub.pluginRegistry.list()) {
+      const sid = `${plugin.id}:${config.hostId}`;
+      serviceIds.push(sid, `${PERSONALHUB_SERVICE_ID}:${config.hostId}`);
       connector.registerPluginService(plugin.id, plugin.name, plugin.version).catch(() => {});
     }
+    // ensure personalhub-agent is always in the list
+    if (!serviceIds.includes(`${PERSONALHUB_SERVICE_ID}:${config.hostId}`)) {
+      serviceIds.push(`${PERSONALHUB_SERVICE_ID}:${config.hostId}`);
+    }
+    connector.syncPluginServices([...new Set(serviceIds)]).catch(() => {});
   }
 
   hub.agent.start(agentIntervalMs);
