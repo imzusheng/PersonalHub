@@ -30,9 +30,15 @@ function getConfig(plugin: RegisteredPlugin): PythonVenvRuntimeConfig {
 export class PythonVenvRuntime implements RuntimeAdapter {
   readonly runtime = 'python-venv';
 
+  private readonly pluginsRoot: string;
+
+  constructor(pluginsDir: string) {
+    this.pluginsRoot = pluginsDir;
+  }
+
   async executeTask(params: ExecuteTaskParams): Promise<ExecuteTaskResult> {
     const config = getConfig(params.plugin);
-    const workingDirectory = config.workingDirectory ? path.resolve(config.workingDirectory) : process.cwd();
+    const workingDirectory = path.resolve(this.pluginsRoot, params.plugin.id);
     const entrypoint = path.resolve(workingDirectory, config.entrypoint);
     if (!entrypoint.startsWith(`${workingDirectory}${path.sep}`)) throw new Error(`Python 插件入口超出工作目录: ${params.plugin.id}`);
     const timeoutMs = Number.isInteger(config.timeoutMs) && config.timeoutMs! > 0 ? config.timeoutMs! : DEFAULT_TIMEOUT_MS;

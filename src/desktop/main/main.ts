@@ -55,6 +55,35 @@ const MOCK_VISION_MANIFEST = {
 
 const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 
+function loadPlugins(pluginsDir: string): void {
+  if (!hub) return;
+  try {
+    const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = path.join(pluginsDir, entry.name, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) continue;
+      try {
+        const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        const result = parsePluginManifest(raw);
+        if (result.success) {
+          const regResult = hub.pluginRegistry.register(result.data);
+          fileLog(`plugin ${entry.name}: ${regResult.success ? 'registered' : regResult.error?.message}`);
+        } else {
+          fileLog(`plugin ${entry.name}: manifest invalid - ${result.error.message}`);
+        }
+      } catch (err) {
+        fileLog(`plugin ${entry.name}: read error - ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch (err) {
+    // pluginsDir 不存在时忽略
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      fileLog(`loadPlugins error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
 async function bootstrap(): Promise<void> {
   const config = loadUserConfig(app.getPath('userData'));
   userConfig = config;
@@ -75,10 +104,13 @@ async function bootstrap(): Promise<void> {
     hostId: config.hostId,
     name: config.name,
     mode: connector.mode,
+    pluginsDir: path.join(app.getPath('userData'), 'plugins'),
   });
   if (connector instanceof AdminOSConnector) {
     updateService = new UpdateService(connector, path.join(app.getPath('temp'), 'PersonalHub-updates'));
   }
+
+  loadPlugins(path.join(app.getPath('userData'), 'plugins'));
 
   const result = parsePluginManifest(MOCK_VISION_MANIFEST);
   if (result.success) {

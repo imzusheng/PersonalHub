@@ -19,6 +19,7 @@ export interface PersonalHubConfig {
   name?: string;
   version?: string;
   mode?: string;
+  pluginsDir?: string;
 }
 
 export interface PersonalHubRuntime {
@@ -48,7 +49,7 @@ export async function createPersonalHub(config: PersonalHubConfig = {}): Promise
   const runtimes = new Map<string, RuntimeAdapter>();
   runtimes.set('mock', mockRuntime);
   runtimes.set('docker', new DockerRuntime());
-  runtimes.set('python-venv', new PythonVenvRuntime());
+  runtimes.set('python-venv', new PythonVenvRuntime(config.pluginsDir ?? '.'));
   const taskRouter = new TaskRouter({
     pluginRegistry,
     capabilityRegistry: capRegistry,
