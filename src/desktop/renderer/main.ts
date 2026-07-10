@@ -42,6 +42,7 @@ interface ConfigResponse {
   hostId: string;
   name: string;
   serverUrl: string | null;
+  apiKey: string | null;
   agentIntervalMs: number;
   startOnLogin: boolean;
   apiKeyConfigured: boolean;
@@ -133,7 +134,7 @@ async function renderTab(status: StatusResponse): Promise<string> {
   if (activeTab === 'settings') {
     const config = await window.personalhub!.getConfig();
     if (!config) return '<section><p class="error">配置尚不可用</p></section>';
-    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://admin.example.com"></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint">API Key：${config.apiKeyConfigured ? '已从环境变量读取' : '未配置。请设置 PERSONALHUB_API_KEY。'}</p><button type="submit">保存设置</button></form></section>`;
+    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint">修改 Server URL 或 API Key 后需要重启 PersonalHub 才能生效。</p><button type="submit">保存设置</button></form></section>`;
   }
   const tick = status.lastTick;
   return `<section><h2>运行概览</h2><div class="status-grid">${statusCard('模式', status.mode)}${statusCard('连接器', status.connector)}${statusCard('本地 API', `${status.apiHost}:${status.apiPort}`)}${statusCard('插件', status.pluginCount)}${statusCard('能力', status.capabilityCount)}${statusCard('最近循环', status.lastHeartbeatAt ?? '暂无')}${statusCard('最近任务', tick ? `${tick.tasksProcessed} 个，成功 ${tick.succeeded}，失败 ${tick.failed}` : '暂无')}</div><div class="actions">${status.agentStatus === 'running' ? '<button id="stopAgent" class="danger">停止 Agent</button>' : '<button id="startAgent">启动 Agent</button>'}<button id="runTick" class="secondary">立即运行一次</button><button id="checkUpdate" class="secondary">检查更新</button></div><pre id="tickOutput" class="result"></pre></section>`;
@@ -176,6 +177,7 @@ function bindEvents(): void {
     await window.personalhub?.saveConfig({
       name: String(values.get('name') ?? ''),
       serverUrl: String(values.get('serverUrl') ?? '') || null,
+      apiKey: String(values.get('apiKey') ?? '') || null,
       agentIntervalMs: Number(values.get('agentIntervalMs')),
       startOnLogin: values.get('startOnLogin') === 'on',
     });

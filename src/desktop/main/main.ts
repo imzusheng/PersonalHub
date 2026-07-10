@@ -57,13 +57,14 @@ const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 async function bootstrap(): Promise<void> {
   const config = loadUserConfig(app.getPath('userData'));
   userConfig = config;
-  const apiKey = process.env.PERSONALHUB_API_KEY?.trim();
+  const apiKey = config.apiKey;
   const connector: Connector = USE_MOCK_CONTROL_PLANE
     ? new MockControlPlaneConnector()
     : config.serverUrl && apiKey
       ? new AdminOSConnector({ serverUrl: config.serverUrl, apiKey, hostId: config.hostId })
       : new LocalOnlyConnector();
   agentIntervalMs = config.agentIntervalMs;
+  fileLog(`bootstrap: connector=${connector.id} serverUrl=${config.serverUrl ?? 'none'} apiKey=${apiKey ? 'configured' : 'missing'}`);
   if (process.platform === 'win32') {
     app.setLoginItemSettings({ openAtLogin: config.startOnLogin });
   }
@@ -243,9 +244,10 @@ function setupIpc(): void {
     hostId: userConfig.hostId,
     name: userConfig.name,
     serverUrl: userConfig.serverUrl,
+    apiKey: userConfig.apiKey ? '••••••••' : null,
     agentIntervalMs: userConfig.agentIntervalMs,
     startOnLogin: userConfig.startOnLogin,
-    apiKeyConfigured: Boolean(process.env.PERSONALHUB_API_KEY?.trim()),
+    apiKeyConfigured: Boolean(userConfig.apiKey),
   } : null);
   ipcMain.handle('ph:saveConfig', async (_event, patch: Partial<Omit<UserConfig, 'hostId'>>) => {
     if (!userConfig) throw new Error('Hub not initialized');

@@ -10,6 +10,7 @@ interface PersistedUserConfig {
   hostId?: string;
   name?: string;
   serverUrl?: string;
+  apiKey?: string;
   agentIntervalMs?: number;
   startOnLogin?: boolean;
 }
@@ -18,6 +19,7 @@ export interface UserConfig {
   hostId: string;
   name: string;
   serverUrl: string | null;
+  apiKey: string | null;
   agentIntervalMs: number;
   startOnLogin: boolean;
 }
@@ -52,6 +54,7 @@ export function loadUserConfig(userDataPath: string): UserConfig {
     hostId: persisted.hostId || randomUUID(),
     name: persisted.name?.trim() || 'PersonalHub',
     serverUrl: normalizeServerUrl(process.env.PERSONALHUB_SERVER_URL ?? persisted.serverUrl),
+    apiKey: process.env.PERSONALHUB_API_KEY?.trim() || persisted.apiKey?.trim() || null,
     agentIntervalMs: normalizeInterval(Number(process.env.PERSONALHUB_AGENT_INTERVAL_MS) || persisted.agentIntervalMs),
     startOnLogin: persisted.startOnLogin ?? false,
   };
@@ -67,6 +70,7 @@ export function saveUserConfig(userDataPath: string, config: UserConfig): void {
     hostId: config.hostId,
     name: config.name,
     serverUrl: config.serverUrl ?? undefined,
+    apiKey: config.apiKey ?? undefined,
     agentIntervalMs: config.agentIntervalMs,
     startOnLogin: config.startOnLogin,
   };
@@ -79,6 +83,7 @@ export function updateUserConfig(userDataPath: string, current: UserConfig, patc
     hostId: current.hostId,
     name: patch.name?.trim() || current.name,
     serverUrl: patch.serverUrl === undefined ? current.serverUrl : normalizeServerUrl(patch.serverUrl ?? undefined),
+    apiKey: patch.apiKey === undefined ? current.apiKey : (patch.apiKey?.trim() || null),
     agentIntervalMs: patch.agentIntervalMs === undefined ? current.agentIntervalMs : normalizeInterval(patch.agentIntervalMs),
     startOnLogin: patch.startOnLogin ?? current.startOnLogin,
   };
