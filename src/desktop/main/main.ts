@@ -6,8 +6,19 @@ import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js
 import type { Connector } from '../../core/connector/connector.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const LOG_FILE = path.join(os.homedir(), 'Desktop', 'personalhub-debug.log');
+
+function fileLog(msg: string): void {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${msg}\n`;
+  try { fs.appendFileSync(LOG_FILE, line, 'utf-8'); } catch { /* 静默 */ }
+  console.log(`[RENDERER] ${msg}`);
+}
 
 let hub: PersonalHubRuntime | null = null;
 let tray: Tray | null = null;
@@ -58,25 +69,67 @@ async function bootstrap(): Promise<void> {
 }
 
 function createWindow(): void {
+  const preloadPath = path.join(__dirname, '..', 'preload', 'index.cjs');
+  const rendererPath = path.join(__dirname, '..', '..', 'renderer', 'index.html');
+
+  fileLog(`createWindow: preload=${preloadPath} renderer=${rendererPath}`);
+  fileLog(`preload exists: ${fs.existsSync(preloadPath)}`);
+  fileLog(`renderer exists: ${fs.existsSync(rendererPath)}`);
+
+  try {
+    const preloadContent = fs.readFileSync(preloadPath, 'utf-8');
+    fileLog(`preload first 100 chars: ${preloadContent.slice(0, 100)}`);
+  } catch (e: unknown) {
+    fileLog(`preload read error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'index.cjs'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
 
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    const levelName = ['verbose', 'info', 'warning', 'error'][level] ?? 'unknown';
+    fileLog(`[console.${levelName}] ${message}`);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    fileLog('did-finish-load: page loaded');
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    fileLog(`did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+  });
+
+  mainWindow.webContents.on('preload-error', (_event, _preloadPath, error) => {
+    fileLog(`preload-error: ${error.message}`);
+  });
+
+  mainWindow.webContents.on('dom-ready', () => {
+    fileLog('dom-ready: DOM is ready');
+  });
+
+  mainWindow.webContents.on('did-fail-provisional-load', (_event, errorCode, errorDescription, validatedURL) => {
+    fileLog(`did-fail-provisional-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+  });
+
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
+    fileLog(`loadURL: ${devServerUrl}`);
     mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', '..', 'renderer', 'index.html'));
+    fileLog(`loadFile: ${rendererPath}`);
+    mainWindow.loadFile(rendererPath);
   }
 
   mainWindow.on('closed', () => {
+    fileLog('window closed');
     mainWindow = null;
   });
 }
@@ -125,9 +178,15 @@ function setupIpc(): void {
     const result = await hub.agent.tick();
     return result;
   });
+
+  ipcMain.handle('ph:log', async (_event, msg: string) => {
+    fileLog(`[renderer] ${msg}`);
+  });
 }
 
 app.whenReady().then(async () => {
+  try { fs.writeFileSync(LOG_FILE, '', 'utf-8'); } catch { /* 静默 */ }
+  fileLog('--- PersonalHub START ---');
   await bootstrap();
   setupIpc();
   createTray();
@@ -147,6 +206,7 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', async () => {
+  fileLog('before-quit');
   if (hub) {
     await hub.stop();
   }
