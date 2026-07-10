@@ -20,6 +20,7 @@ interface StatusResponse {
   startedAt: string;
   hostId: string | null;
   memoryPercent: number;
+  taskCount: number;
 }
 
 interface PluginSummary {
@@ -115,9 +116,16 @@ async function render(): Promise<void> {
   }
   try {
     const status = await window.personalhub.getStatus();
-    if (!status) throw new Error('Hub not initialized 未初始化');
+    if (!status) throw new Error('Hub not initialized');
     const content = await renderTab(status);
-    app.innerHTML = `<main><header><div><h1>PersonalHub</h1><p>${escapeHtml(status.hostId ?? '未分配主机 ID')}</p></div><span class="connection ${status.agentStatus === 'running' ? 'online' : 'offline'}">${escapeHtml(status.agentStatus)}</span></header>${nav()}${content}</main>`;
+    app.innerHTML = [
+      '<main>',
+      '<header><div><h1>PersonalHub</h1><p>', escapeHtml(status.hostId ?? '未分配主机 ID'), '</p></div>',
+      '<span class="connection ', status.agentStatus === 'running' ? 'online' : 'offline', '">', escapeHtml(status.agentStatus), '</span></header>',
+      nav(),
+      content,
+      '</main>',
+    ].join('');
     bindEvents();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -133,7 +141,10 @@ async function renderTab(status: StatusResponse): Promise<string> {
   }
   if (activeTab === 'tasks') {
     const tasks = await window.personalhub!.getTasks();
-    return `<section><h2>本地任务</h2>${tasks.length === 0 ? '<p class="empty">暂无任务</p>' : `<div class="task-list">${tasks.map((task) => `<article class="card"><div class="row"><strong>${escapeHtml(task.capability)}</strong><span class="badge ${escapeHtml(task.status)}">${escapeHtml(task.status)}</span></div><code>${escapeHtml(task.taskId)}</code>${task.error ? `<p class="error">${escapeHtml(task.error.message)}</p>` : task.output !== null ? `<pre>${escapeHtml(JSON.stringify(task.output, null, 2))}</pre>` : ''}</article>`).join('')}</div>`}</section>`;
+    return `<section><h2>本地任务</h2>${tasks.length === 0 ? '<p class="empty">暂无任务</p>' : `<div class="task-list">${tasks.map((task) => {
+      const time = task.updatedAt ? new Date(task.updatedAt).toLocaleString() : '-';
+      return `<article class="card"><div class="row"><strong>${escapeHtml(task.capability)}</strong><span class="badge ${escapeHtml(task.status)}">${escapeHtml(task.status)}</span><span class="hint">${time}</span></div><code>${escapeHtml(task.taskId)}</code>${task.error ? `<p class="error">${escapeHtml(task.error.message)}</p>` : task.output !== null ? `<pre>${escapeHtml(JSON.stringify(task.output, null, 2))}</pre>` : ''}</article>`;
+    }).join('')}</div>`}</section>`;
   }
   if (activeTab === 'logs') {
     const logs = await window.personalhub!.getLogs();
@@ -142,10 +153,27 @@ async function renderTab(status: StatusResponse): Promise<string> {
   if (activeTab === 'settings') {
     const config = await window.personalhub!.getConfig();
     if (!config) return '<section><p class="error">配置尚不可用</p></section>';
-    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" id="toggleApiKey" class="icon-btn">👁</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
+    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" id="toggleApiKey" class="icon-btn">&#x1f441;</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
   }
-  const tick = status.lastTick;
-  return `<section><h2>运行概览</h2><div class="status-grid">${statusCard('模式', status.mode)}${statusCard('连接器', status.connector)}${statusCard('本地 API', `${status.apiHost}:${status.apiPort}`)}${statusCard('插件', status.pluginCount)}${statusCard('能力', status.capabilityCount)}${statusCard('内存', `${status.memoryPercent}%${status.memoryPercent >= 90 ? ' ⚠' : ''}`)}${statusCard('最近循环', fmtTime(status.lastHeartbeatAt))}${statusCard('启动时间', fmtTime(status.startedAt))}${statusCard('最近任务', tick ? `${tick.tasksProcessed} 个，成功 ${tick.succeeded}，失败 ${tick.failed}` : '暂无')}</div><div class="actions">${status.agentStatus === 'running' ? '<button id="stopAgent" class="danger">停止 Agent</button>' : '<button id="startAgent">启动 Agent</button>'}<button id="runTick" class="secondary">立即运行一次</button><button id="checkUpdate" class="secondary">检查更新</button></div><pre id="tickOutput" class="result"></pre></section>`;
+  return [
+    '<section><h2>运行概览</h2><div class="status-grid">',
+    statusCard('模式', status.mode),
+    statusCard('连接器', status.connector),
+    statusCard('本地 API', `${status.apiHost}:${status.apiPort}`),
+    statusCard('插件', status.pluginCount),
+    statusCard('能力', status.capabilityCount),
+    statusCard('内存', `${status.memoryPercent}%${status.memoryPercent >= 90 ? ' \\u26a0' : ''}`),
+    statusCard('最近循环', fmtTime(status.lastHeartbeatAt)),
+    statusCard('启动时间', fmtTime(status.startedAt)),
+    statusCard('本地任务', `${status.taskCount} 条`),
+    '</div><div class="actions">',
+    status.agentStatus === 'running'
+      ? '<button id="stopAgent" class="danger">停止 Agent</button>'
+      : '<button id="startAgent">启动 Agent</button>',
+    '<button id="runTick" class="secondary">立即运行一次</button>',
+    '<button id="checkUpdate" class="secondary">检查更新</button>',
+    '</div><pre id="tickOutput" class="result"></pre></section>',
+  ].join('');
 }
 
 function bindEvents(): void {
@@ -168,10 +196,7 @@ function bindEvents(): void {
     output.textContent = '正在检查更新...';
     try {
       const plan = await window.personalhub?.checkUpdate();
-      if (!plan) {
-        output.textContent = '当前没有可用更新。';
-        return;
-      }
+      if (!plan) { output.textContent = '当前没有可用更新。'; return; }
       output.textContent = `发现更新：${plan.artifactName}\n正在下载并校验...`;
       const downloadedPath = await window.personalhub?.downloadUpdate(plan);
       output.textContent = `更新包已下载并校验：${downloadedPath}\n请关闭 PersonalHub 后手动运行安装包完成更新。`;

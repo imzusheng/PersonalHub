@@ -30,29 +30,6 @@ let agentIntervalMs = 30_000;
 let userConfig: UserConfig | null = null;
 let updateService: UpdateService | null = null;
 
-const MOCK_VISION_MANIFEST = {
-  id: 'vision.mock',
-  name: 'Mock Vision',
-  version: '0.1.0',
-  runtime: 'mock',
-  capabilities: [
-    {
-      name: 'image.describe',
-      inputSchema: {
-        type: 'object',
-        required: ['imageUrl'],
-        properties: { imageUrl: { type: 'string' } },
-      },
-      outputSchema: {
-        type: 'object',
-        required: ['description'],
-        properties: { description: { type: 'string' } },
-      },
-    },
-  ],
-  healthcheck: { type: 'mock' },
-};
-
 const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 
 function loadPlugins(pluginsDir: string): void {
@@ -84,6 +61,71 @@ function loadPlugins(pluginsDir: string): void {
   }
 }
 
+function getTasksPath(userData: string): string {
+  return path.join(userData, 'tasks.jsonl');
+}
+
+function persistTask(userData: string, task: Record<string, unknown>): void {
+  try {
+    fs.mkdirSync(userData, { recursive: true });
+    fs.appendFileSync(getTasksPath(userData), `${JSON.stringify(task)}\n`, 'utf-8');
+  } catch { /* 静默 */ }
+}
+
+function loadPersistedTasks(userData: string): void {
+  if (!hub) return;
+  const tasksPath = getTasksPath(userData);
+  if (!fs.existsSync(tasksPath)) return;
+  try {
+    const lines = fs.readFileSync(tasksPath, 'utf-8').split('\n').filter(Boolean);
+    let restored = 0;
+    for (const line of lines.slice(-500)) {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (typeof parsed !== 'object' || parsed === null) continue;
+        const task = parsed as Record<string, unknown>;
+        if (typeof task.taskId === 'string' && typeof task.capability === 'string') {
+          const existing = hub.taskStore.findById(task.taskId);
+          if (existing) continue;
+          hub.taskStore.create({
+            capability: task.capability as string,
+            pluginId: (task.pluginId as string) || '',
+            input: task.input,
+          });
+          if (task.status && task.status !== 'queued') {
+            hub.taskStore.update(task.taskId, {
+              status: task.status as 'queued' | 'running' | 'succeeded' | 'failed',
+              output: task.output as unknown,
+              error: task.error as { message: string; details?: unknown } | null,
+            });
+          }
+          restored += 1;
+        }
+      } catch { /* skip invalid line */ }
+    }
+    if (restored > 0) fileLog(`persisted tasks: restored ${restored}`);
+  } catch (err) {
+    fileLog(`loadPersistedTasks error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function wrapTaskStore(userData: string): void {
+  if (!hub) return;
+  const store = hub.taskStore;
+  const origCreate = store.create.bind(store);
+  const origUpdate = store.update.bind(store);
+  store.create = (params) => {
+    const task = origCreate(params);
+    persistTask(userData, task as unknown as Record<string, unknown>);
+    return task;
+  };
+  store.update = (taskId, update) => {
+    const task = origUpdate(taskId, update);
+    if (task) persistTask(userData, task as unknown as Record<string, unknown>);
+    return task;
+  };
+}
+
 async function bootstrap(): Promise<void> {
   const config = loadUserConfig(app.getPath('userData'));
   userConfig = config;
@@ -106,6 +148,10 @@ async function bootstrap(): Promise<void> {
     mode: connector.mode,
     pluginsDir: path.join(app.getPath('userData'), 'plugins'),
   });
+
+  loadPersistedTasks(app.getPath('userData'));
+  wrapTaskStore(app.getPath('userData'));
+
   if (connector instanceof AdminOSConnector) {
     updateService = new UpdateService(connector, path.join(app.getPath('temp'), 'PersonalHub-updates'));
   }
@@ -113,14 +159,8 @@ async function bootstrap(): Promise<void> {
   loadPlugins(path.join(app.getPath('userData'), 'plugins'));
   if (connector instanceof AdminOSConnector) {
     for (const plugin of hub.pluginRegistry.list()) {
-      if (plugin.id === 'vision.mock') continue;
       connector.registerPluginService(plugin.id, plugin.name, plugin.version).catch(() => {});
     }
-  }
-
-  const result = parsePluginManifest(MOCK_VISION_MANIFEST);
-  if (result.success) {
-    hub.pluginRegistry.register(result.data);
   }
 
   hub.agent.start(agentIntervalMs);
@@ -249,6 +289,7 @@ function setupIpc(): void {
       startedAt: hub.startedAt,
       hostId: userConfig?.hostId ?? null,
       memoryPercent,
+      taskCount: hub.taskStore.list().length,
     };
   });
 
