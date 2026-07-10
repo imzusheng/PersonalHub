@@ -68,6 +68,7 @@ interface PersonalHubApi {
   saveConfig(patch: Partial<Omit<ConfigResponse, 'hostId' | 'apiKeyConfigured'>>): Promise<ConfigResponse>;
   checkUpdate(): Promise<UpdatePlan | null>;
   downloadUpdate(plan: UpdatePlan): Promise<string>;
+  restartApp(): Promise<void>;
   log(msg: string): Promise<void>;
 }
 
@@ -134,7 +135,7 @@ async function renderTab(status: StatusResponse): Promise<string> {
   if (activeTab === 'settings') {
     const config = await window.personalhub!.getConfig();
     if (!config) return '<section><p class="error">配置尚不可用</p></section>';
-    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint">修改 Server URL 或 API Key 后需要重启 PersonalHub 才能生效。</p><button type="submit">保存设置</button></form></section>`;
+    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" id="toggleApiKey" class="icon-btn">👁</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
   }
   const tick = status.lastTick;
   return `<section><h2>运行概览</h2><div class="status-grid">${statusCard('模式', status.mode)}${statusCard('连接器', status.connector)}${statusCard('本地 API', `${status.apiHost}:${status.apiPort}`)}${statusCard('插件', status.pluginCount)}${statusCard('能力', status.capabilityCount)}${statusCard('最近循环', status.lastHeartbeatAt ?? '暂无')}${statusCard('最近任务', tick ? `${tick.tasksProcessed} 个，成功 ${tick.succeeded}，失败 ${tick.failed}` : '暂无')}</div><div class="actions">${status.agentStatus === 'running' ? '<button id="stopAgent" class="danger">停止 Agent</button>' : '<button id="startAgent">启动 Agent</button>'}<button id="runTick" class="secondary">立即运行一次</button><button id="checkUpdate" class="secondary">检查更新</button></div><pre id="tickOutput" class="result"></pre></section>`;
@@ -171,17 +172,39 @@ function bindEvents(): void {
       output.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}`;
     }
   });
+  document.getElementById('toggleApiKey')?.addEventListener('click', () => {
+    const input = document.querySelector<HTMLInputElement>('[name="apiKey"]');
+    if (input) input.type = input.type === 'password' ? 'text' : 'password';
+  });
   document.getElementById('settingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const values = new FormData(event.currentTarget as HTMLFormElement);
+    const serverUrl = String(values.get('serverUrl') ?? '') || null;
+    const apiKey = String(values.get('apiKey') ?? '') || null;
+    const currentConfig = await window.personalhub?.getConfig();
+    const needsRestart = currentConfig && (
+      currentConfig.serverUrl !== serverUrl ||
+      (apiKey && currentConfig.apiKeyConfigured) || (apiKey !== null && !currentConfig.apiKeyConfigured)
+    );
     await window.personalhub?.saveConfig({
       name: String(values.get('name') ?? ''),
-      serverUrl: String(values.get('serverUrl') ?? '') || null,
-      apiKey: String(values.get('apiKey') ?? '') || null,
+      serverUrl,
+      apiKey,
       agentIntervalMs: Number(values.get('agentIntervalMs')),
       startOnLogin: values.get('startOnLogin') === 'on',
     });
+    if (needsRestart) {
+      const hint = document.getElementById('restartHint');
+      const btn = document.getElementById('restartBtn');
+      const saveBtn = document.getElementById('saveBtn');
+      if (hint) hint.style.display = 'block';
+      if (btn) btn.style.display = 'inline-block';
+      if (saveBtn) saveBtn.textContent = '已保存';
+    }
     await render();
+  });
+  document.getElementById('restartBtn')?.addEventListener('click', async () => {
+    await window.personalhub?.restartApp();
   });
 }
 

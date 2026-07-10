@@ -12,6 +12,7 @@ const api = {
   saveConfig: (patch) => ipcRenderer.invoke('ph:saveConfig', patch),
   checkUpdate: () => ipcRenderer.invoke('ph:checkUpdate'),
   downloadUpdate: (plan) => ipcRenderer.invoke('ph:downloadUpdate', plan),
+  restartApp: () => ipcRenderer.invoke('ph:restartApp'),
   log: (msg) => ipcRenderer.invoke('ph:log', msg),
 };
 

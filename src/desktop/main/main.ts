@@ -263,6 +263,10 @@ function setupIpc(): void {
     if (!updateService) throw new Error('当前未连接 AdminOS，无法下载更新');
     return updateService.download(plan);
   });
+  ipcMain.handle('ph:restartApp', async () => {
+    app.relaunch();
+    app.quit();
+  });
 
   ipcMain.handle('ph:log', async (_event, msg: string) => {
     fileLog(`[renderer] ${msg}`);
