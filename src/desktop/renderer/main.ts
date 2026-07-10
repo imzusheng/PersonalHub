@@ -106,7 +106,7 @@ async function render(): Promise<void> {
   }
   try {
     const status = await window.personalhub.getStatus();
-    if (!status) throw new Error('Hub 未初始化');
+    if (!status) throw new Error('Hub not initialized 未初始化');
     const content = await renderTab(status);
     app.innerHTML = `<main><header><div><h1>PersonalHub</h1><p>${escapeHtml(status.hostId ?? '未分配主机 ID')}</p></div><span class="connection ${status.agentStatus === 'running' ? 'online' : 'offline'}">${escapeHtml(status.agentStatus)}</span></header>${nav()}${content}</main>`;
     bindEvents();
@@ -183,9 +183,4 @@ function bindEvents(): void {
   });
 }
 
-try {
-  void render();
-} catch (err) {
-  console.error('[renderer] top-level error:', err);
-}
-console.log('[renderer] main.ts entry loaded');
+void render();
