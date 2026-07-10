@@ -87,6 +87,12 @@ function escapeHtml(value: unknown): string {
   }[character] ?? character));
 }
 
+function fmtTime(iso: string | null): string {
+  if (!iso) return '暂无';
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
 function debugLog(message: string): void {
   window.personalhub?.log(message).catch(() => undefined);
 }
@@ -139,7 +145,7 @@ async function renderTab(status: StatusResponse): Promise<string> {
     return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" id="toggleApiKey" class="icon-btn">👁</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
   }
   const tick = status.lastTick;
-  return `<section><h2>运行概览</h2><div class="status-grid">${statusCard('模式', status.mode)}${statusCard('连接器', status.connector)}${statusCard('本地 API', `${status.apiHost}:${status.apiPort}`)}${statusCard('插件', status.pluginCount)}${statusCard('能力', status.capabilityCount)}${statusCard('内存', `${status.memoryPercent}%${status.memoryPercent >= 90 ? ' ⚠' : ''}`)}${statusCard('最近循环', status.lastHeartbeatAt ?? '暂无')}${statusCard('最近任务', tick ? `${tick.tasksProcessed} 个，成功 ${tick.succeeded}，失败 ${tick.failed}` : '暂无')}</div><div class="actions">${status.agentStatus === 'running' ? '<button id="stopAgent" class="danger">停止 Agent</button>' : '<button id="startAgent">启动 Agent</button>'}<button id="runTick" class="secondary">立即运行一次</button><button id="checkUpdate" class="secondary">检查更新</button></div><pre id="tickOutput" class="result"></pre></section>`;
+  return `<section><h2>运行概览</h2><div class="status-grid">${statusCard('模式', status.mode)}${statusCard('连接器', status.connector)}${statusCard('本地 API', `${status.apiHost}:${status.apiPort}`)}${statusCard('插件', status.pluginCount)}${statusCard('能力', status.capabilityCount)}${statusCard('内存', `${status.memoryPercent}%${status.memoryPercent >= 90 ? ' ⚠' : ''}`)}${statusCard('最近循环', fmtTime(status.lastHeartbeatAt))}${statusCard('启动时间', fmtTime(status.startedAt))}${statusCard('最近任务', tick ? `${tick.tasksProcessed} 个，成功 ${tick.succeeded}，失败 ${tick.failed}` : '暂无')}</div><div class="actions">${status.agentStatus === 'running' ? '<button id="stopAgent" class="danger">停止 Agent</button>' : '<button id="startAgent">启动 Agent</button>'}<button id="runTick" class="secondary">立即运行一次</button><button id="checkUpdate" class="secondary">检查更新</button></div><pre id="tickOutput" class="result"></pre></section>`;
 }
 
 function bindEvents(): void {
