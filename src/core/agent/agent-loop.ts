@@ -62,6 +62,7 @@ export class AgentLoop {
       this.timer = null;
     }
     await this.inFlightTick;
+    this.registered = false;
   }
 
   isRunning(): boolean {

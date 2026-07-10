@@ -223,9 +223,6 @@ function setupIpc(): void {
   ipcMain.handle('ph:startAgent', async () => {
     if (!hub) return { error: 'Hub not initialized' };
     hub.agent.start(agentIntervalMs);
-    if (hub.connector.reportStopped) {
-      hub.connector.reportStopped().catch(() => {});
-    }
     updateTrayStatus();
     return { ok: true };
   });
