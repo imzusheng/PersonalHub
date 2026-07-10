@@ -20,6 +20,7 @@ export interface RemoteTask {
   remoteTaskId: string;
   capability: string;
   input: unknown;
+  leaseExpiresAt?: number;
 }
 
 export interface TaskResult {
@@ -35,6 +36,16 @@ export interface WorkerError {
   details?: unknown;
 }
 
+export interface HostMetrics {
+  memoryPercent: number;
+  cpuPercent?: number;
+  gpuUtilPercent?: number;
+  gpuTempC?: number;
+  gpuName?: string;
+  gpuVramMB?: number;
+  recordedAt: number;
+}
+
 export interface Connector {
   readonly id: string;
   readonly mode: string;
@@ -43,6 +54,9 @@ export interface Connector {
   sendHeartbeat(snapshot: HostSnapshot): Promise<void>;
   publishCapabilities(capabilities: CapabilitySummary[]): Promise<void>;
   pullTasks(): Promise<RemoteTask[]>;
+  markTaskRunning?(remoteTaskId: string): Promise<void>;
+  renewTaskLease?(remoteTaskId: string): Promise<void>;
+  publishMetrics?(metrics: HostMetrics): Promise<void>;
   pushTaskResult(result: TaskResult): Promise<void>;
   reportError(error: WorkerError): Promise<void>;
 }

@@ -1,0 +1,31 @@
+name: Publish PersonalHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Build Windows installer
+        run: npx tsc -p tsconfig.build.json && node scripts/copy-preload.mjs && npx vite build && npx electron-builder --win --x64
+      - name: Publish to AdminOS
+        shell: pwsh
+        env:
+          ADMINOS_RELEASE_WEBHOOK_URL: ${{ secrets.ADMINOS_RELEASE_WEBHOOK_URL }}
+          ADMINOS_RELEASE_WEBHOOK_TOKEN: ${{ secrets.ADMINOS_RELEASE_WEBHOOK_TOKEN }}
+          PERSONALHUB_RELEASE_CHANNEL: stable
+          PERSONALHUB_VERSION: ${{ github.ref_name }}
+        run: $env:PERSONALHUB_ARTIFACT_PATH = (Get-ChildItem 'release/PersonalHub-Setup-*-x64.exe' | Select-Object -First 1).FullName; node scripts/publish-release.mjs

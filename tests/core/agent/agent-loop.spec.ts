@@ -71,6 +71,43 @@ describe('AgentLoop', () => {
     expect(connector.getState().heartbeatCount).toBe(1);
   });
 
+  it('首次 tick 注册主机，后续 tick 不重复注册', async () => {
+    const connector = new MockControlPlaneConnector();
+    const agent = new AgentLoop({
+      connector,
+      pluginRegistry,
+      capabilityRegistry: capRegistry,
+      taskRouter,
+      startedAt: new Date().toISOString(),
+      hostId: 'host-1',
+    });
+
+    await agent.tick();
+    await agent.tick();
+
+    expect(connector.getState().registeredHost?.hostId).toBe('host-1');
+    expect(connector.getState().heartbeatCount).toBe(2);
+  });
+
+  it('start 和 stop 管理单个常驻循环', async () => {
+    const connector = new MockControlPlaneConnector();
+    const agent = new AgentLoop({
+      connector,
+      pluginRegistry,
+      capabilityRegistry: capRegistry,
+      taskRouter,
+      startedAt: new Date().toISOString(),
+    });
+
+    agent.start(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(agent.isRunning()).toBe(true);
+    expect(connector.getState().heartbeatCount).toBe(1);
+
+    agent.stop();
+    expect(agent.isRunning()).toBe(false);
+  });
+
   it('publishes capabilities during tick', async () => {
     const connector = new MockControlPlaneConnector();
     const agent = new AgentLoop({

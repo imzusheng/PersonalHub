@@ -30,6 +30,7 @@ const PluginManifestBaseSchema = z.object({
   capabilities: z.array(CapabilitySchema).min(1),
   healthcheck: HealthcheckSchema.optional(),
   description: z.string().optional(),
+  runtimeConfig: z.record(z.unknown()).optional(),
 });
 
 export type PluginManifest = z.infer<typeof PluginManifestBaseSchema>;

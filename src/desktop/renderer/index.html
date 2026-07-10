@@ -1,65 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PersonalHub</title>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      margin: 0;
-      padding: 24px;
-      background: #1a1a1a;
-      color: #e0e0e0;
-    }
-    h1 { font-size: 22px; margin-bottom: 16px; }
-    .status-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px 24px;
-      margin-bottom: 24px;
-    }
-    .status-item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .status-label {
-      font-size: 11px;
-      color: #888;
-      text-transform: uppercase;
-    }
-    .status-value {
-      font-size: 14px;
-      color: #e0e0e0;
-    }
-    .tick-section {
-      border-top: 1px solid #333;
-      padding-top: 16px;
-    }
-    .tick-result {
-      margin-top: 12px;
-      padding: 12px;
-      background: #222;
-      border-radius: 6px;
-      font-size: 13px;
-      font-family: monospace;
-    }
-    button {
-      padding: 8px 20px;
-      background: #4a9eff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    button:hover { background: #3a8eef; }
-    button:disabled { background: #555; cursor: not-allowed; }
+    :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; background: #101418; color: #e8edf2; }
+    body { margin: 0; min-width: 320px; } main { max-width: 920px; margin: 0 auto; padding: 28px; }
+    header, .row, .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    h1 { margin: 0; font-size: 25px; } h2 { margin: 0 0 16px; font-size: 17px; } header p, .hint { margin: 5px 0 0; color: #8994a1; font-size: 12px; }
+    nav { display: flex; gap: 4px; margin: 24px 0; border-bottom: 1px solid #28313a; overflow-x: auto; }
+    button { border: 0; border-radius: 7px; background: #3c8bdc; color: #fff; padding: 9px 13px; cursor: pointer; font: inherit; }
+    button:hover { background: #5aa3ed; } button.secondary { background: #28313a; } button.danger { background: #b94747; }
+    .nav-button { border-radius: 7px 7px 0 0; background: transparent; color: #98a5b3; } .nav-button.active { color: #fff; background: #202a33; }
+    .connection, .badge, .chips span { border-radius: 999px; padding: 4px 8px; font-size: 11px; }.connection.online, .badge.succeeded { background: #153e2b; color: #6ed69a; }.connection.offline, .badge.failed { background: #482326; color: #f69a9a; }.badge.running, .badge.queued { background: #413819; color: #eed374; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }.status-item, .card { background: #182027; border: 1px solid #28333d; border-radius: 9px; padding: 13px; }.status-label { display: block; color: #8994a1; font-size: 11px; margin-bottom: 5px; }.status-value { overflow-wrap: anywhere; }.actions { justify-content: flex-start; margin-top: 20px; }.card { margin: 9px 0; }.card p, code { color: #9ba7b4; font-size: 12px; }.chips { display: flex; gap: 6px; flex-wrap: wrap; }.chips span { background: #243342; color: #a9c9e9; }.logs, .result, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0d1216; border: 1px solid #253039; border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; font-size: 12px; }.result:empty { display: none; }.settings { display: grid; gap: 14px; max-width: 560px; }.settings label { display: grid; gap: 6px; color: #b9c4ce; font-size: 13px; }.settings .checkbox { display: flex; align-items: center; gap: 8px; }.settings .checkbox input { width: auto; } input { background: #11181e; color: #e8edf2; border: 1px solid #34414e; border-radius: 7px; padding: 9px; }.empty, .hint { color: #8994a1; }.error { color: #ff9b9b; }
+    @media (max-width: 600px) { main { padding: 18px; } header { align-items: flex-start; flex-direction: column; } }
   </style>
 </head>
-<body>
-  <div id="app"></div>
-  <script type="module" src="./main.ts"></script>
-</body>
+<body><div id="app"></div><script type="module" src="./main.ts"></script></body>
 </html>

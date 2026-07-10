@@ -7,6 +7,7 @@ export interface RegisteredPlugin {
   runtime: string;
   capabilities: PluginCapability[];
   description?: string;
+  runtimeConfig?: Record<string, unknown>;
 }
 
 export type RegisterResult =
@@ -52,6 +53,7 @@ export class PluginRegistry {
       runtime: manifest.runtime,
       capabilities: manifest.capabilities,
       description: manifest.description,
+      runtimeConfig: manifest.runtimeConfig,
     };
 
     this.plugins.set(manifest.id, plugin);

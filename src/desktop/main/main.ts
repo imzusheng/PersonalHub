@@ -2,27 +2,32 @@ import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import { createPersonalHub, type PersonalHubRuntime } from '../../core/app.js';
 import { parsePluginManifest } from '../../core/domain/plugin-manifest.js';
 import { MockControlPlaneConnector } from '../../core/connector/mock-control-plane-connector.js';
+import { AdminOSConnector } from '../../core/connector/adminos-connector.js';
 import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js';
 import type { Connector } from '../../core/connector/connector.js';
+import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config.js';
+import { UpdateService } from './update-service.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const LOG_FILE = path.join(os.homedir(), 'Desktop', 'personalhub-debug.log');
+let logFile = '';
 
 function fileLog(msg: string): void {
   const ts = new Date().toISOString();
   const line = `[${ts}] ${msg}\n`;
-  try { fs.appendFileSync(LOG_FILE, line, 'utf-8'); } catch { /* 静默 */ }
+  try { fs.appendFileSync(logFile, line, 'utf-8'); } catch { /* 静默 */ }
   console.log(`[RENDERER] ${msg}`);
 }
 
 let hub: PersonalHubRuntime | null = null;
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
+let agentIntervalMs = 30_000;
+let userConfig: UserConfig | null = null;
+let updateService: UpdateService | null = null;
 
 const MOCK_VISION_MANIFEST = {
   id: 'vision.mock',
@@ -50,20 +55,35 @@ const MOCK_VISION_MANIFEST = {
 const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 
 async function bootstrap(): Promise<void> {
+  const config = loadUserConfig(app.getPath('userData'));
+  userConfig = config;
+  const apiKey = process.env.PERSONALHUB_API_KEY?.trim();
   const connector: Connector = USE_MOCK_CONTROL_PLANE
     ? new MockControlPlaneConnector()
-    : new LocalOnlyConnector();
+    : config.serverUrl && apiKey
+      ? new AdminOSConnector({ serverUrl: config.serverUrl, apiKey, hostId: config.hostId })
+      : new LocalOnlyConnector();
+  agentIntervalMs = config.agentIntervalMs;
+  if (process.platform === 'win32') {
+    app.setLoginItemSettings({ openAtLogin: config.startOnLogin });
+  }
 
   hub = await createPersonalHub({
     connector,
-    hostId: 'local-dev',
-    name: 'PersonalHub',
+    hostId: config.hostId,
+    name: config.name,
+    mode: connector.mode,
   });
+  if (connector instanceof AdminOSConnector) {
+    updateService = new UpdateService(connector, path.join(app.getPath('temp'), 'PersonalHub-updates'));
+  }
 
   const result = parsePluginManifest(MOCK_VISION_MANIFEST);
   if (result.success) {
     hub.pluginRegistry.register(result.data);
   }
+
+  hub.agent.start(agentIntervalMs);
 
   console.log(`PersonalHub API: http://${hub.apiHost}:${hub.apiPort}`);
 }
@@ -135,8 +155,7 @@ function createWindow(): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createEmpty();
-  tray = new Tray(icon);
+  tray = new Tray(createTrayIcon('yellow'));
   tray.setToolTip('PersonalHub');
 
   const contextMenu = Menu.buildFromTemplate([
@@ -155,14 +174,30 @@ function createTray(): void {
   });
 }
 
+function createTrayIcon(color: 'green' | 'yellow' | 'red' | 'gray') {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6" fill="${color}"/></svg>`;
+  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+}
+
+function updateTrayStatus(): void {
+  if (!tray || !hub) return;
+  const color = !hub.agent.isRunning()
+    ? 'gray'
+    : hub.connector.id === 'adminos'
+      ? 'green'
+      : 'yellow';
+  tray.setImage(createTrayIcon(color));
+  tray.setToolTip(`PersonalHub: ${hub.agent.isRunning() ? hub.connector.id : 'stopped'}`);
+}
+
 function setupIpc(): void {
   ipcMain.handle('ph:getStatus', async () => {
     if (!hub) return null;
     const lastTick = hub.agent.getLastTick();
     return {
-      mode: 'local-only',
+      mode: hub.connector.mode,
       connector: hub.connector.id,
-      agentStatus: 'manual',
+      agentStatus: hub.agent.isRunning() ? 'running' : 'stopped',
       apiHost: hub.apiHost,
       apiPort: hub.apiPort,
       lastHeartbeatAt: hub.agent.getLastTickAt(),
@@ -170,6 +205,7 @@ function setupIpc(): void {
       pluginCount: hub.pluginRegistry.list().length,
       capabilityCount: hub.capabilityRegistry.list().length,
       startedAt: hub.startedAt,
+      hostId: userConfig?.hostId ?? null,
     };
   });
 
@@ -179,17 +215,68 @@ function setupIpc(): void {
     return result;
   });
 
+  ipcMain.handle('ph:startAgent', async () => {
+    if (!hub) return { error: 'Hub not initialized' };
+    hub.agent.start(agentIntervalMs);
+    updateTrayStatus();
+    return { ok: true };
+  });
+
+  ipcMain.handle('ph:stopAgent', async () => {
+    if (!hub) return { error: 'Hub not initialized' };
+    await hub.agent.stop();
+    updateTrayStatus();
+    return { ok: true };
+  });
+
+  ipcMain.handle('ph:getPlugins', async () => hub?.pluginRegistry.list() ?? []);
+  ipcMain.handle('ph:getTasks', async () => hub?.taskStore.list() ?? []);
+  ipcMain.handle('ph:getLogs', async () => {
+    try {
+      const contents = fs.readFileSync(logFile, 'utf-8');
+      return contents.slice(-100_000);
+    } catch {
+      return '';
+    }
+  });
+  ipcMain.handle('ph:getConfig', async () => userConfig ? {
+    hostId: userConfig.hostId,
+    name: userConfig.name,
+    serverUrl: userConfig.serverUrl,
+    agentIntervalMs: userConfig.agentIntervalMs,
+    startOnLogin: userConfig.startOnLogin,
+    apiKeyConfigured: Boolean(process.env.PERSONALHUB_API_KEY?.trim()),
+  } : null);
+  ipcMain.handle('ph:saveConfig', async (_event, patch: Partial<Omit<UserConfig, 'hostId'>>) => {
+    if (!userConfig) throw new Error('Hub not initialized');
+    userConfig = updateUserConfig(app.getPath('userData'), userConfig, patch);
+    agentIntervalMs = userConfig.agentIntervalMs;
+    if (process.platform === 'win32') {
+      app.setLoginItemSettings({ openAtLogin: userConfig.startOnLogin });
+    }
+    return userConfig;
+  });
+  ipcMain.handle('ph:checkUpdate', async () => updateService?.check() ?? null);
+  ipcMain.handle('ph:downloadUpdate', async (_event, plan) => {
+    if (!updateService) throw new Error('当前未连接 AdminOS，无法下载更新');
+    return updateService.download(plan);
+  });
+
   ipcMain.handle('ph:log', async (_event, msg: string) => {
     fileLog(`[renderer] ${msg}`);
   });
 }
 
 app.whenReady().then(async () => {
-  try { fs.writeFileSync(LOG_FILE, '', 'utf-8'); } catch { /* 静默 */ }
+  const logsPath = app.getPath('logs');
+  fs.mkdirSync(logsPath, { recursive: true });
+  logFile = path.join(logsPath, 'personalhub-debug.log');
+  try { fs.writeFileSync(logFile, '', 'utf-8'); } catch { /* 静默 */ }
   fileLog('--- PersonalHub START ---');
   await bootstrap();
   setupIpc();
   createTray();
+  updateTrayStatus();
   createWindow();
 });
 
@@ -208,6 +295,7 @@ app.on('activate', () => {
 app.on('before-quit', async () => {
   fileLog('before-quit');
   if (hub) {
+    await hub.agent.stop();
     await hub.stop();
   }
 });
