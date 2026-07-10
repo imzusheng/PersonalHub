@@ -183,4 +183,9 @@ function bindEvents(): void {
   });
 }
 
-void render();
+try {
+  void render();
+} catch (err) {
+  console.error('[renderer] top-level error:', err);
+}
+console.log('[renderer] main.ts entry loaded');
