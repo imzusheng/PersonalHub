@@ -170,10 +170,10 @@ export class AdminOSConnector implements Connector {
       method: 'POST',
       body: { status: 'stopped' },
     });
-    this.request(`/api/hosts/${this.hostIdPath}/services/sync`, {
+    await this.request(`/api/hosts/${this.hostIdPath}/services/sync`, {
       method: 'POST',
       body: { keep: [] },
-    }).catch(() => {});
+    });
   }
 
   async getUpdatePlan(): Promise<AdminOSUpdatePlan | null> {

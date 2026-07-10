@@ -332,10 +332,10 @@ function setupIpc(): void {
 
   ipcMain.handle('ph:stopAgent', async () => {
     if (!hub) return { error: 'Hub not initialized' };
+    await hub.agent.stop();
     if (hub.connector.reportStopped) {
       try { await hub.connector.reportStopped(); } catch { /* swallow */ }
     }
-    await hub.agent.stop();
     updateTrayStatus();
     return { ok: true };
   });
