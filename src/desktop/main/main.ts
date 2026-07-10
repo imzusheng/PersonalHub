@@ -62,10 +62,10 @@ function createWindow(): void {
     width: 900,
     height: 700,
     webPreferences: {
-      preload: path.join(__dirname, 'preload', 'index.js'),
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   });
 
@@ -73,7 +73,7 @@ function createWindow(): void {
   if (devServerUrl) {
     mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, '..', '..', 'renderer', 'index.html'));
   }
 
   mainWindow.on('closed', () => {
