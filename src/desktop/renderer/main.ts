@@ -27,16 +27,47 @@ interface TickResult {
 
 declare global {
   interface Window {
-    personalhub: PersonalHubApi;
+    personalhub?: PersonalHubApi;
   }
+}
+
+const DEBUG_KEY = 'personalhub_debug';
+
+function debug(msg: string): void {
+  const lines = (sessionStorage.getItem(DEBUG_KEY) ?? '').split('\n').filter(Boolean);
+  lines.push(`${new Date().toISOString().slice(11, 19)} ${msg}`);
+  sessionStorage.setItem(DEBUG_KEY, lines.slice(-200).join('\n'));
+  const el = document.getElementById('debug-log');
+  if (el) el.textContent = lines.slice(-50).join('\n');
 }
 
 const app = document.getElementById('app')!;
 
+function showError(title: string, detail: string): void {
+  debug(`ERROR: ${title} - ${detail}`);
+  app.innerHTML = `
+    <h1>PersonalHub</h1>
+    <div style="padding:16px;background:#4a2020;border:1px solid #ff4444;border-radius:6px;margin:16px 0;">
+      <strong style="color:#ff6666;">${title}</strong>
+      <pre style="color:#ffaaaa;font-size:12px;margin:8px 0 0;white-space:pre-wrap;">${detail}</pre>
+    </div>
+    <div id="debug-log" style="padding:12px;background:#111;border-radius:4px;font-family:monospace;font-size:11px;color:#aaa;white-space:pre-wrap;max-height:300px;overflow:auto;"></div>
+  `;
+}
+
 async function renderStatus(): Promise<void> {
+  debug('renderStatus start');
+
+  if (!window.personalhub) {
+    showError('Preload 失败', 'window.personalhub 未定义，preload 脚本可能未加载。\n请检查 dist/desktop/preload/index.cjs 是否存在且为 CommonJS 格式。');
+    return;
+  }
+
   const status = await window.personalhub.getStatus();
+  debug('getStatus returned: ' + JSON.stringify(status));
+
   if (!status) {
-    app.innerHTML = '<p>PersonalHub not initialized</p>';
+    app.innerHTML = '<h1>PersonalHub</h1><p style="color:#ff6666;">Hub not initialized</p>';
     return;
   }
 
@@ -70,7 +101,7 @@ async function renderStatus(): Promise<void> {
     tickResultEl.style.display = 'block';
     tickResultEl.textContent = 'Running tick...';
     try {
-      const result = await window.personalhub.runAgentTick();
+      const result = await window.personalhub!.runAgentTick();
       tickResultEl.textContent = JSON.stringify(result, null, 2);
     } catch (e) {
       tickResultEl.textContent = `Error: ${e}`;
@@ -79,6 +110,15 @@ async function renderStatus(): Promise<void> {
       renderStatus();
     }
   });
+
+  debug('renderStatus done');
 }
 
-renderStatus();
+debug('main.ts loaded, window.personalhub=' + typeof window.personalhub);
+
+try {
+  renderStatus();
+} catch (e) {
+  const msg = e instanceof Error ? e.message : String(e);
+  showError('JS 异常', msg + '\n\nStack:\n' + (e instanceof Error ? e.stack : ''));
+}
