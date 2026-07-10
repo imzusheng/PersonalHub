@@ -57,6 +57,7 @@ export interface Connector {
   markTaskRunning?(remoteTaskId: string): Promise<void>;
   renewTaskLease?(remoteTaskId: string): Promise<void>;
   publishMetrics?(metrics: HostMetrics): Promise<void>;
+  reportStopped?(): Promise<void>;
   pushTaskResult(result: TaskResult): Promise<void>;
   reportError(error: WorkerError): Promise<void>;
 }

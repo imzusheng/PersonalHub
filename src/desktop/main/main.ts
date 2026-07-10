@@ -7,6 +7,7 @@ import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js
 import type { Connector } from '../../core/connector/connector.js';
 import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config.js';
 import { UpdateService } from './update-service.js';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -195,6 +196,8 @@ function setupIpc(): void {
   ipcMain.handle('ph:getStatus', async () => {
     if (!hub) return null;
     const lastTick = hub.agent.getLastTick();
+    const totalMem = os.totalmem();
+    const memoryPercent = totalMem > 0 ? Math.round(((totalMem - os.freemem()) / totalMem) * 100) : 0;
     return {
       mode: hub.connector.mode,
       connector: hub.connector.id,
@@ -207,6 +210,7 @@ function setupIpc(): void {
       capabilityCount: hub.capabilityRegistry.list().length,
       startedAt: hub.startedAt,
       hostId: userConfig?.hostId ?? null,
+      memoryPercent,
     };
   });
 
@@ -219,12 +223,18 @@ function setupIpc(): void {
   ipcMain.handle('ph:startAgent', async () => {
     if (!hub) return { error: 'Hub not initialized' };
     hub.agent.start(agentIntervalMs);
+    if (hub.connector.reportStopped) {
+      hub.connector.reportStopped().catch(() => {});
+    }
     updateTrayStatus();
     return { ok: true };
   });
 
   ipcMain.handle('ph:stopAgent', async () => {
     if (!hub) return { error: 'Hub not initialized' };
+    if (hub.connector.reportStopped) {
+      try { await hub.connector.reportStopped(); } catch { /* swallow */ }
+    }
     await hub.agent.stop();
     updateTrayStatus();
     return { ok: true };

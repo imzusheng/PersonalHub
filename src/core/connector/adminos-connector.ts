@@ -145,6 +145,13 @@ export class AdminOSConnector implements Connector {
     });
   }
 
+  async reportStopped(): Promise<void> {
+    await this.request(`/api/hosts/${this.hostIdPath}/services/${encodeURIComponent(this.serviceId)}/state`, {
+      method: 'POST',
+      body: { status: 'stopped' },
+    });
+  }
+
   async getUpdatePlan(): Promise<AdminOSUpdatePlan | null> {
     const payload = await this.request<unknown>(`/api/hosts/${this.hostIdPath}/update-plan`, { method: 'GET' });
     if (!payload || typeof payload !== 'object') throw new Error('AdminOS 返回了无效更新计划');
