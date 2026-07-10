@@ -69,6 +69,19 @@ export class AdminOSConnector implements Connector {
     this.leaseBatchSize = Math.min(Math.max(config.leaseBatchSize ?? DEFAULT_LEASE_BATCH_SIZE, 1), 20);
   }
 
+  async registerPluginService(pluginId: string, pluginName: string, version: string): Promise<void> {
+    const serviceId = `${pluginId}:${this.config.hostId}`;
+    await this.request(`/api/hosts/${this.hostIdPath}/services/register`, {
+      method: 'POST',
+      body: {
+        serviceId,
+        kind: pluginId,
+        name: pluginName,
+        version,
+      },
+    });
+  }
+
   async registerHost(snapshot: HostSnapshot): Promise<void> {
     await this.request('/api/hosts/register', {
       method: 'POST',

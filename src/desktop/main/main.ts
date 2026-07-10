@@ -111,6 +111,12 @@ async function bootstrap(): Promise<void> {
   }
 
   loadPlugins(path.join(app.getPath('userData'), 'plugins'));
+  if (connector instanceof AdminOSConnector) {
+    for (const plugin of hub.pluginRegistry.list()) {
+      if (plugin.id === 'vision.mock') continue;
+      connector.registerPluginService(plugin.id, plugin.name, plugin.version).catch(() => {});
+    }
+  }
 
   const result = parsePluginManifest(MOCK_VISION_MANIFEST);
   if (result.success) {
