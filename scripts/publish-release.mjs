@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const webhookUrl = process.env.ADMINOS_RELEASE_WEBHOOK_URL;
 const webhookToken = process.env.ADMINOS_RELEASE_WEBHOOK_TOKEN;
@@ -28,12 +32,10 @@ const metadata = {
   manifest: { version: process.env.PERSONALHUB_VERSION || null, platform: 'win32', arch: 'x64' },
 };
 
-const form = new FormData();
-form.set('metadata', JSON.stringify(metadata));
-form.set('file', new Blob([artifact], { type: metadata.artifactMimeType }), artifactName);
-const response = await fetch(`${webhookUrl.replace(/\/$/, '')}/upload`, {
-  method: 'POST',
-  headers: { 'x-ci-hook-token': webhookToken },
-  body: form,
-});
-if (!response.ok) throw new Error(`AdminOS 发布失败: HTTP ${response.status}`);
+await execFileAsync('curl.exe', [
+  '--fail', '--silent', '--show-error', '--max-time', '1800',
+  '-H', `x-ci-hook-token: ${webhookToken}`,
+  '-F', `metadata=${JSON.stringify(metadata)}`,
+  '-F', `file=@${artifactPath};type=${metadata.artifactMimeType}`,
+  `${webhookUrl.replace(/\/$/, '')}/upload`,
+], { windowsHide: true, maxBuffer: 1024 * 1024 });
