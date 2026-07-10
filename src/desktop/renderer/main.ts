@@ -153,7 +153,7 @@ async function renderTab(status: StatusResponse): Promise<string> {
   if (activeTab === 'settings') {
     const config = await window.personalhub!.getConfig();
     if (!config) return '<section><p class="error">配置尚不可用</p></section>';
-    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" id="toggleApiKey" class="icon-btn">&#x1f441;</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
+    return `<section><h2>连接设置</h2><form id="settingsForm" class="settings"><label>主机名称<input name="name" value="${escapeHtml(config.name)}" required></label><label>AdminOS 地址<input name="serverUrl" value="${escapeHtml(config.serverUrl ?? '')}" placeholder="https://volc.zusheng.cc"></label><label>Agent API Key<div class="input-row"><input name="apiKey" type="password" value="${escapeHtml(config.apiKey ?? '')}" placeholder="${config.apiKeyConfigured ? '已配置，留空则不修改' : '输入 API Key'}"><button type="button" class="icon-btn" onclick="const i=document.querySelector('[name=apiKey]');if(i)i.type=i.type==='password'?'text':'password'">&#x1f441;</button></div></label><label>Agent 间隔（毫秒）<input name="agentIntervalMs" type="number" min="1000" value="${config.agentIntervalMs}" required></label><label class="checkbox"><input name="startOnLogin" type="checkbox" ${config.startOnLogin ? 'checked' : ''}> Windows 登录后自动启动</label><p class="hint">Host ID：<code>${escapeHtml(config.hostId)}</code></p><p class="hint" id="restartHint" style="display:none;color:#eed374;">保存成功。Server URL 或 API Key 已修改，需要重启生效。</p><button type="submit" id="saveBtn">保存设置</button><button type="button" id="restartBtn" class="danger" style="display:none;">重启 PersonalHub</button></form></section>`;
   }
   return [
     '<section><h2>运行概览</h2><div class="status-grid">',
@@ -203,10 +203,6 @@ function bindEvents(): void {
     } catch (error) {
       output.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}`;
     }
-  });
-  document.getElementById('toggleApiKey')?.addEventListener('click', () => {
-    const input = document.querySelector<HTMLInputElement>('[name="apiKey"]');
-    if (input) input.type = input.type === 'password' ? 'text' : 'password';
   });
   document.getElementById('settingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
