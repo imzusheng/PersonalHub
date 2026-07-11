@@ -38,6 +38,8 @@ export class AgentLoop {
   private publishedCapabilitiesSignature: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private inFlightTick: Promise<TickResult> | null = null;
+  /** 活跃任务的取消信号，key = remoteTaskId */
+  private cancelMap = new Map<string, AbortController>();
 
   constructor(deps: AgentLoopDeps) {
     this.deps = deps;
@@ -180,6 +182,8 @@ export class AgentLoop {
 
     let workDir: WorkDir | null = null;
     let taskFailed = false;
+    const abortController = new AbortController();
+    this.cancelMap.set(remoteTask.remoteTaskId, abortController);
 
     try {
       await this.deps.connector.markTaskRunning?.(remoteTask.remoteTaskId);
@@ -210,6 +214,8 @@ export class AgentLoop {
       const renewLease = this.deps.connector.renewTaskLease?.bind(this.deps.connector);
       const renewTimer = renewLease
         ? setInterval(() => {
+          // 任务被取消时停止续租
+          if (abortController.signal.aborted) return;
           void renewLease(remoteTask.remoteTaskId).catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             return this.deps.connector.reportError({ message: `任务续租失败: ${message}` });
@@ -248,6 +254,7 @@ export class AgentLoop {
       result.failed += 1;
       taskFailed = true;
     } finally {
+      this.cancelMap.delete(remoteTask.remoteTaskId);
       // ArtifactLayer: 清理临时目录（成功立即删，失败保留 1h）
       if (workDir && this.deps.artifactLayer) {
         await this.deps.artifactLayer.cleanupWorkDir(workDir, taskFailed);
@@ -263,5 +270,14 @@ export class AgentLoop {
 
   getLastTickAt(): string | null {
     return this.lastTickAt;
+  }
+
+  /** 取消指定任务的执行 */
+  cancelTask(remoteTaskId: string): void {
+    const controller = this.cancelMap.get(remoteTaskId);
+    if (controller) {
+      controller.abort();
+      this.cancelMap.delete(remoteTaskId);
+    }
   }
 }
