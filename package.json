@@ -4,7 +4,6 @@
   "description": "Open-source personal computer AI Worker Runtime - turns a personal Windows PC into a pluggable, locally-callable, optionally remotely-schedulable AI capability node.",
   "type": "module",
   "license": "MIT",
-  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:electron": "VITE_DEV_SERVER_URL=http://localhost:5173 concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
