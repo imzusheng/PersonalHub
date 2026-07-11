@@ -82,4 +82,8 @@ export interface Connector {
   reportStopped?(services: PluginServiceSnapshot[]): Promise<void>;
   pushTaskResult(result: TaskResult): Promise<void>;
   reportError(error: WorkerError): Promise<void>;
+  /** 下载输入文件到本地路径 */
+  downloadInputFile?(url: string, destPath: string): Promise<void>;
+  /** 上传输出文件（multipart），与旧 ASR succeeded 端点兼容 */
+  uploadJobArtifacts?(jobId: string, files: { localPath: string; name: string; mimeType?: string }[]): Promise<void>;
 }

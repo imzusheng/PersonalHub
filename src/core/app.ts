@@ -5,6 +5,7 @@ import { TaskRouter } from './domain/task-router.js';
 import { MockRuntime } from './runtime/mock-runtime.js';
 import { DockerRuntime } from './runtime/docker-runtime.js';
 import { PythonVenvRuntime } from './runtime/python-venv-runtime.js';
+import { WslDockerRuntime } from './runtime/wsl-docker-runtime.js';
 import { LocalOnlyConnector } from './connector/local-only-connector.js';
 import { AgentLoop } from './agent/agent-loop.js';
 import { startApiServer } from './api/server.js';
@@ -50,6 +51,7 @@ export async function createPersonalHub(config: PersonalHubConfig = {}): Promise
   runtimes.set('mock', mockRuntime);
   runtimes.set('docker', new DockerRuntime());
   runtimes.set('python-venv', new PythonVenvRuntime(config.pluginsDir ?? '.'));
+  runtimes.set('wsl-docker', new WslDockerRuntime());
   const taskRouter = new TaskRouter({
     pluginRegistry,
     capabilityRegistry: capRegistry,

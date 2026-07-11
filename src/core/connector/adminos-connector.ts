@@ -9,6 +9,9 @@ import type {
   TaskResult,
   WorkerError,
 } from './connector.js';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LEASE_BATCH_SIZE = 5;
@@ -211,6 +214,63 @@ export class AdminOSConnector implements Connector {
     await this.request(`/api/hosts/${this.hostIdPath}/deployments/${encodeURIComponent(deploymentId)}/events`, {
       method: 'POST', body: { phase, message },
     });
+  }
+
+  /** 下载输入文件到本地路径 */
+  async downloadInputFile(url: string, destPath: string): Promise<void> {
+    const response = await this.fetchImpl(url, {
+      headers: { 'x-api-key': this.config.apiKey },
+    });
+    if (!response.ok) throw new Error(`下载输入文件失败: HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, buffer);
+  }
+
+  /** 上传输出文件（multipart），与旧 ASR succeeded 端点协议兼容 */
+  async uploadJobArtifacts(
+    jobId: string,
+    files: { localPath: string; name: string; mimeType?: string }[],
+  ): Promise<void> {
+    const boundary = `----PersonalHub${crypto.randomBytes(16).toString('hex')}`;
+    const parts: Buffer[] = [];
+
+    for (const file of files) {
+      if (!fs.existsSync(file.localPath)) {
+        throw new Error(`文件不存在: ${file.localPath}`);
+      }
+      const content = fs.readFileSync(file.localPath);
+      const fileName = file.name || path.basename(file.localPath);
+      const mimeType = file.mimeType || 'application/octet-stream';
+
+      parts.push(Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="files"; filename="${fileName}"\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n`,
+      ));
+      parts.push(content);
+      parts.push(Buffer.from('\r\n'));
+    }
+
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    const body = Buffer.concat(parts);
+
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/api/hosts/jobs/${encodeURIComponent(jobId)}/succeeded`,
+      {
+        method: 'POST',
+        headers: {
+          'x-api-key': this.config.apiKey,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        body: body as unknown as BodyInit,
+      },
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`上传文件失败: HTTP ${response.status}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+    }
   }
 
   private get hostIdPath(): string {

@@ -2,7 +2,13 @@
   "id": "asr",
   "name": "Qwen ASR",
   "version": "1.0.0",
-  "runtime": "mock",
+  "runtime": "wsl-docker",
+  "runtimeConfig": {
+    "containerName": "server-zushengcc-host-services-host-asr-service-1",
+    "port": 5001,
+    "timeoutMs": 600000,
+    "wslDistro": "Ubuntu-22.04"
+  },
   "capabilities": [
     {
       "name": "asr.test",
@@ -24,5 +30,5 @@
       }
     }
   ],
-  "healthcheck": { "type": "mock" }
+  "healthcheck": { "type": "process" }
 }

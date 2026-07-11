@@ -2,7 +2,13 @@
   "id": "vision",
   "name": "Qwen Vision",
   "version": "1.0.0",
-  "runtime": "mock",
+  "runtime": "wsl-docker",
+  "runtimeConfig": {
+    "containerName": "server-zushengcc-host-services-host-vision-service-1",
+    "port": 5002,
+    "timeoutMs": 600000,
+    "wslDistro": "Ubuntu-22.04"
+  },
   "capabilities": [
     {
       "name": "vision.test",
@@ -26,5 +32,5 @@
       }
     }
   ],
-  "healthcheck": { "type": "mock" }
+  "healthcheck": { "type": "process" }
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const ALLOWED_RUNTIMES = ['mock', 'docker', 'wsl', 'native', 'python-venv'] as const;
+const ALLOWED_RUNTIMES = ['mock', 'docker', 'wsl', 'native', 'python-venv', 'wsl-docker'] as const;
 const ALLOWED_HEALTHCHECK_TYPES = ['mock', 'http', 'process'] as const;
 
 const JsonSchemaObjectSchema = z.object({

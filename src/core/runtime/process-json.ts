@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const MAX_OUTPUT_BYTES = 1_000_000;
+const MAX_OUTPUT_BYTES = 10_000_000;
 
 export async function runJsonProcess(command: string, args: string[], input: unknown, timeoutMs: number, cwd?: string): Promise<unknown> {
   return new Promise((resolve, reject) => {

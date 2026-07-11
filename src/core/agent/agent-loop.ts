@@ -2,14 +2,18 @@ import type { Connector, PluginServiceSnapshot, RemoteCommand, RemoteTask, TaskR
 import type { PluginRegistry } from '../domain/plugin-registry.js';
 import type { CapabilityRegistry } from '../domain/capability-registry.js';
 import type { TaskRouter } from '../domain/task-router.js';
+import type { ArtifactLayer } from '../artifact/artifact-layer.js';
 import { createHostSnapshot, toCapabilitySummaries } from './host-snapshot.js';
 import { collectHostMetrics } from './host-metrics.js';
+import type { WorkDir } from '../artifact/temp-manager.js';
 
 export interface AgentLoopDeps {
   connector: Connector;
   pluginRegistry: PluginRegistry;
   capabilityRegistry: CapabilityRegistry;
   taskRouter: TaskRouter;
+  /** 可选：文件传输层，用于下载输入/上传输出 */
+  artifactLayer?: ArtifactLayer;
   startedAt: string;
   hostId?: string;
   name?: string;
@@ -174,17 +178,30 @@ export class AgentLoop {
       error: { message: '' },
     };
 
+    let workDir: WorkDir | null = null;
+    let taskFailed = false;
+
     try {
       await this.deps.connector.markTaskRunning?.(remoteTask.remoteTaskId);
+
+      // ArtifactLayer: 下载输入文件，合并本地路径到 input
+      let taskInput: unknown = remoteTask.input;
+      if (this.deps.artifactLayer) {
+        workDir = this.deps.artifactLayer.createWorkDir(remoteTask.remoteTaskId);
+        const downloadResult = await this.deps.artifactLayer.downloadInputs(remoteTask);
+        taskInput = downloadResult.params;
+      }
+
       const createResult = await this.deps.taskRouter.createTask({
         capability: remoteTask.capability,
-        input: remoteTask.input,
+        input: taskInput,
       });
 
       if (!createResult.success) {
         taskResult.error = { message: createResult.error.message };
         await this.deps.connector.pushTaskResult(taskResult);
         result.failed += 1;
+        taskFailed = true;
         return;
       }
 
@@ -202,8 +219,19 @@ export class AgentLoop {
       const execResult = await this.deps.taskRouter.executeTask(createResult.task.taskId).finally(() => {
         if (renewTimer) clearInterval(renewTimer);
       });
+
       if (execResult.success) {
         taskResult.status = 'succeeded';
+        // ArtifactLayer: 上传输出文件
+        if (workDir && this.deps.artifactLayer) {
+          try {
+            await this.deps.artifactLayer.uploadOutputs(workDir, execResult.task.output, remoteTask.remoteTaskId);
+          } catch (err) {
+            const uploadMsg = err instanceof Error ? err.message : String(err);
+            // 上传失败也要上报，但不覆盖人物状态（任务本身推理成功）
+            void this.deps.connector.reportError({ message: `文件上传失败: ${uploadMsg}` });
+          }
+        }
         taskResult.output = execResult.task.output;
         taskResult.error = null;
         result.succeeded += 1;
@@ -211,12 +239,19 @@ export class AgentLoop {
         taskResult.status = 'failed';
         taskResult.error = { message: execResult.error.message };
         result.failed += 1;
+        taskFailed = true;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       taskResult.status = 'failed';
       taskResult.error = { message, details: err };
       result.failed += 1;
+      taskFailed = true;
+    } finally {
+      // ArtifactLayer: 清理临时目录（成功立即删，失败保留 1h）
+      if (workDir && this.deps.artifactLayer) {
+        await this.deps.artifactLayer.cleanupWorkDir(workDir, taskFailed);
+      }
     }
 
     await this.deps.connector.pushTaskResult(taskResult);
