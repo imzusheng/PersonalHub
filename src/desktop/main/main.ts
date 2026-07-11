@@ -194,6 +194,13 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
+    backgroundColor: '#05070a',
+    ...(process.platform === 'darwin' ? {
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 12, y: 15 },
+      vibrancy: 'under-window' as const,
+      visualEffectState: 'active' as const,
+    } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -298,6 +305,7 @@ function setupIpc(): void {
       hostId: userConfig?.hostId ?? null,
       memoryPercent,
       taskCount: hub.taskStore.list().length,
+      platform: process.platform,
     };
   });
 
