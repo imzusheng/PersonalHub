@@ -2,7 +2,68 @@
 
 > 调研日期：2026-07-11
 > 调研方式：macOS 源码 + SSH 远程探查 Windows 11 实际运行环境
-> 状态：调研完成，Phase 0 就绪
+> 实施日期：2026-07-11
+> 状态：代码已完成，待 Windows 端部署验证
+
+## 实施历史
+
+| Phase | 提交 | 内容 |
+|---|---|---|
+| Phase 1 | `034de84` | ASR/Vision mock 插件 (asr.test/vision.test) |
+| Phase 2 | `f505736` | WslDockerRuntime + ArtifactLayer 文件传输层 |
+| Phase 3 | `6f936ca` (PH) + `95c52c0` (SVR) | AgentLoop 取消机制 + 容器 HTTP API |
+| Phase 4 | `87b7964` | 生产切换 (asr.test→asr, vision.test→vision) |
+| Phase 5 | — | Windows 端运维操作（见下方清单） |
+
+---
+
+## 部署前检查清单（Phase 5 运维操作）
+
+以下操作需在 Windows 11 (`100.111.241.81`) 上执行：
+
+### 1. PersonalHub 接入 AdminOS
+- [ ] 设置 → 填入 `serverUrl = https://volc.zusheng.cc`
+- [ ] 填入 `apiKey`
+- [ ] 修改 `hostId` 为 `win11-4060-home-pb`（避免与旧 daemon 冲突）
+- [ ] 保存并重启 PersonalHub
+
+### 2. 容器 HTTP 服务部署
+```bash
+# WSL2 内
+cd /srv/adminos-host-services/current
+docker compose build
+docker compose up -d
+# 验证
+curl http://localhost:5001/health
+curl http://localhost:5002/health
+```
+
+### 3. 停用旧 daemon（保留为备用）
+```bash
+sudo systemctl stop adminos-host-daemon.service
+sudo systemctl disable adminos-host-daemon.service
+```
+
+### 4. 启用 PersonalHub 开机自启
+- [ ] 设置 → 开启"登录时启动"
+
+### 5. 移除 Windows 计划任务（可选）
+```powershell
+schtasks /delete /tn AdminOSHostServicesStartAtLogon /f
+```
+
+### 6. 验证
+- [ ] AdminOS 控制台看到 `win11-4060-home-pb` 在线
+- [ ] 能力列表含 `asr`、`vision`
+- [ ] 创建测试 ASR 任务 → 正常完成
+- [ ] 创建测试 Vision 任务 → 正常完成
+
+### 回滚
+```bash
+# 1. PersonalHub → 清空 serverUrl → local-only
+# 2. WSL2: sudo systemctl enable --now adminos-host-daemon.service
+# 3. 恢复旧 Docker 容器: 修改 compose.yaml ENTRYPOINT 注释
+```
 
 ---
 
