@@ -50,6 +50,10 @@ export class PythonVenvRuntime implements RuntimeAdapter {
     try {
       const config = getConfig(plugin);
       await execFileAsync(config.pythonPath ?? 'python', ['--version'], { timeout: 5_000, windowsHide: true });
+      if (plugin.healthcheck?.type === 'http' && typeof plugin.healthcheck.url === 'string') {
+        const response = await fetch(plugin.healthcheck.url, { signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) throw new Error(`健康检查失败: HTTP ${response.status}`);
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) };

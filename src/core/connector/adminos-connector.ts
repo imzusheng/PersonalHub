@@ -3,6 +3,8 @@ import type {
   Connector,
   HostSnapshot,
   HostMetrics,
+  PluginServiceSnapshot,
+  RemoteCommand,
   RemoteTask,
   TaskResult,
   WorkerError,
@@ -11,7 +13,6 @@ import type {
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LEASE_BATCH_SIZE = 5;
 const HOST_AGENT_PROTOCOL_VERSION = '1.0';
-const PERSONALHUB_SERVICE_ID = 'personalhub-agent';
 
 interface FetchResponse {
   ok: boolean;
@@ -52,7 +53,6 @@ export class AdminOSConnector implements Connector {
 
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchImplementation;
-  private readonly serviceId: string;
   private readonly leaseBatchSize: number;
 
   constructor(private readonly config: AdminOSConnectorConfig) {
@@ -65,27 +65,13 @@ export class AdminOSConnector implements Connector {
 
     this.baseUrl = url.toString().replace(/\/$/, '');
     this.fetchImpl = config.fetchImpl ?? (globalThis.fetch as unknown as FetchImplementation);
-    this.serviceId = `${PERSONALHUB_SERVICE_ID}:${config.hostId}`;
     this.leaseBatchSize = Math.min(Math.max(config.leaseBatchSize ?? DEFAULT_LEASE_BATCH_SIZE, 1), 20);
   }
 
-  async registerPluginService(pluginId: string, pluginName: string, version: string): Promise<void> {
-    const serviceId = `${pluginId}:${this.config.hostId}`;
-    await this.request(`/api/hosts/${this.hostIdPath}/services/register`, {
-      method: 'POST',
-      body: {
-        serviceId,
-        kind: pluginId,
-        name: pluginName,
-        version,
-      },
-    });
-  }
-
-  async syncPluginServices(serviceIds: string[]): Promise<void> {
+  async syncPluginServices(services: PluginServiceSnapshot[]): Promise<void> {
     await this.request(`/api/hosts/${this.hostIdPath}/services/sync`, {
       method: 'POST',
-      body: { keep: serviceIds },
+      body: { services },
     });
   }
 
@@ -97,15 +83,6 @@ export class AdminOSConnector implements Connector {
         name: snapshot.name,
         os: snapshot.platform,
         arch: process.arch,
-      },
-    });
-    await this.request(`/api/hosts/${this.hostIdPath}/services/register`, {
-      method: 'POST',
-      body: {
-        serviceId: this.serviceId,
-        kind: PERSONALHUB_SERVICE_ID,
-        name: 'PersonalHub Agent',
-        version: snapshot.version,
       },
     });
   }
@@ -165,14 +142,33 @@ export class AdminOSConnector implements Connector {
     });
   }
 
-  async reportStopped(): Promise<void> {
-    await this.request(`/api/hosts/${this.hostIdPath}/services/${encodeURIComponent(this.serviceId)}/state`, {
-      method: 'POST',
-      body: { status: 'stopped' },
-    });
+  async reportStopped(services: PluginServiceSnapshot[]): Promise<void> {
+    await this.request(`/api/hosts/${this.hostIdPath}/disconnect`, { method: 'POST', body: {} });
     await this.request(`/api/hosts/${this.hostIdPath}/services/sync`, {
       method: 'POST',
-      body: { keep: [] },
+      body: { services: services.map((service) => ({ ...service, status: 'offline' })) },
+    });
+  }
+
+  async pullCommands(): Promise<RemoteCommand[]> {
+    const payload = await this.request<unknown>(`/api/hosts/${this.hostIdPath}/commands`, { method: 'GET' });
+    if (!Array.isArray(payload)) throw new Error('AdminOS 返回了无效的命令列表');
+    const commands: RemoteCommand[] = [];
+    for (const item of payload) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as { commandId?: unknown; type?: unknown; payloadJson?: unknown };
+      if (typeof row.commandId !== 'string' || typeof row.type !== 'string') continue;
+      await this.request(`/api/hosts/${this.hostIdPath}/commands/${encodeURIComponent(row.commandId)}/claim`, { method: 'POST', body: {} });
+      let commandPayload: Record<string, unknown> = {};
+      if (typeof row.payloadJson === 'string') try { commandPayload = JSON.parse(row.payloadJson) as Record<string, unknown>; } catch { commandPayload = {}; }
+      commands.push({ commandId: row.commandId, type: row.type, payload: commandPayload });
+    }
+    return commands;
+  }
+
+  async completeCommand(commandId: string, ok: boolean, error?: string): Promise<void> {
+    await this.request(`/api/hosts/${this.hostIdPath}/commands/${encodeURIComponent(commandId)}/${ok ? 'succeeded' : 'failed'}`, {
+      method: 'POST', body: ok ? {} : { error: error ?? 'command failed' },
     });
   }
 

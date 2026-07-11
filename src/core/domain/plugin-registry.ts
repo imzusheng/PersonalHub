@@ -8,6 +8,7 @@ export interface RegisteredPlugin {
   capabilities: PluginCapability[];
   description?: string;
   runtimeConfig?: Record<string, unknown>;
+  healthcheck?: { type: 'mock' | 'http' | 'process'; [key: string]: unknown };
 }
 
 export type RegisterResult =
@@ -54,6 +55,7 @@ export class PluginRegistry {
       capabilities: manifest.capabilities,
       description: manifest.description,
       runtimeConfig: manifest.runtimeConfig,
+      healthcheck: manifest.healthcheck,
     };
 
     this.plugins.set(manifest.id, plugin);

@@ -1,4 +1,4 @@
-import type { Connector, HostSnapshot, CapabilitySummary, RemoteTask, TaskResult, WorkerError } from './connector.js';
+import type { Connector, HostSnapshot, CapabilitySummary, PluginServiceSnapshot, RemoteTask, TaskResult, WorkerError } from './connector.js';
 
 export interface MockControlPlaneState {
   heartbeats: HostSnapshot[];
@@ -8,6 +8,8 @@ export interface MockControlPlaneState {
   results: TaskResult[];
   errors: WorkerError[];
   heartbeatCount: number;
+  services: PluginServiceSnapshot[];
+  serviceSyncCount: number;
 }
 
 export class MockControlPlaneConnector implements Connector {
@@ -25,6 +27,8 @@ export class MockControlPlaneConnector implements Connector {
       results: [],
       errors: [],
       heartbeatCount: 0,
+      services: [],
+      serviceSyncCount: 0,
     };
   }
 
@@ -39,6 +43,11 @@ export class MockControlPlaneConnector implements Connector {
 
   async publishCapabilities(capabilities: CapabilitySummary[]): Promise<void> {
     this.state.publishedCapabilities = capabilities.map((c) => ({ ...c }));
+  }
+
+  async syncPluginServices(services: PluginServiceSnapshot[]): Promise<void> {
+    this.state.services = services.map((service) => ({ ...service }));
+    this.state.serviceSyncCount += 1;
   }
 
   async pullTasks(): Promise<RemoteTask[]> {

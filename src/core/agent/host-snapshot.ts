@@ -42,5 +42,7 @@ export function toCapabilitySummaries(
     name: c.name,
     pluginId: c.pluginId,
     description: c.description,
+    ...(c.inputSchema && typeof c.inputSchema === 'object' ? { inputSchema: c.inputSchema as Record<string, unknown> } : {}),
+    ...(c.outputSchema && typeof c.outputSchema === 'object' ? { outputSchema: c.outputSchema as Record<string, unknown> } : {}),
   }));
 }

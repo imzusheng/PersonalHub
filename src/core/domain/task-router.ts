@@ -164,4 +164,12 @@ export class TaskRouter {
   listTasks(): Task[] {
     return this.deps.taskStore.list();
   }
+
+  async checkPluginHealth(pluginId: string): Promise<{ ok: boolean; message?: string }> {
+    const plugin = this.deps.pluginRegistry.findById(pluginId);
+    if (!plugin) return { ok: false, message: `Plugin "${pluginId}" not found` };
+    const runtime = this.deps.runtimes.get(plugin.runtime);
+    if (!runtime) return { ok: false, message: `Runtime "${plugin.runtime}" not found` };
+    return runtime.healthCheck(plugin);
+  }
 }

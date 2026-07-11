@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AdminOSConnector } from '../../../src/core/connector/adminos-connector.js';
 
 describe('AdminOSConnector', () => {
-  it('注册主机并注册 PersonalHub Agent 服务', async () => {
+  it('只注册主机，不把 PersonalHub Agent 注册为业务服务', async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }));
     const connector = new AdminOSConnector({
       serverUrl: 'https://admin.example.test/',
@@ -28,7 +28,20 @@ describe('AdminOSConnector', () => {
       headers: expect.objectContaining({ 'x-api-key': 'test-key' }),
     }));
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ hostId: 'host-1', name: 'Win PC', os: 'win32' });
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'https://admin.example.test/api/hosts/host-1/services/register', expect.any(Object));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('同步真实插件快照并在停止时保留插件、立即断开主机', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }));
+    const connector = new AdminOSConnector({ serverUrl: 'https://admin.example.test', apiKey: 'test-key', hostId: 'host-1', fetchImpl });
+    const services = [{ serviceId: 'ollama.embed:host-1', kind: 'ollama.embed', name: 'Ollama Embed', version: '0.1.0', status: 'running' as const, controlMode: 'observable' as const, capabilities: ['text.embed'] }];
+
+    await connector.syncPluginServices(services);
+    await connector.reportStopped(services);
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ services });
+    expect(fetchImpl.mock.calls[1][0]).toBe('https://admin.example.test/api/hosts/host-1/disconnect');
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body).services[0].status).toBe('offline');
   });
 
   it('将租用任务和结果映射到 Hosts API', async () => {

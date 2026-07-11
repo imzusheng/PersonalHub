@@ -14,6 +14,25 @@ export interface CapabilitySummary {
   name: string;
   pluginId: string;
   description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+}
+
+export interface PluginServiceSnapshot {
+  serviceId: string;
+  kind: string;
+  name: string;
+  version: string;
+  status: 'running' | 'error' | 'offline';
+  controlMode: 'managed' | 'observable';
+  capabilities: string[];
+  healthError?: string;
+}
+
+export interface RemoteCommand {
+  commandId: string;
+  type: string;
+  payload: Record<string, unknown>;
 }
 
 export interface RemoteTask {
@@ -53,11 +72,14 @@ export interface Connector {
   registerHost(snapshot: HostSnapshot): Promise<void>;
   sendHeartbeat(snapshot: HostSnapshot): Promise<void>;
   publishCapabilities(capabilities: CapabilitySummary[]): Promise<void>;
+  syncPluginServices?(services: PluginServiceSnapshot[]): Promise<void>;
+  pullCommands?(): Promise<RemoteCommand[]>;
+  completeCommand?(commandId: string, ok: boolean, error?: string): Promise<void>;
   pullTasks(): Promise<RemoteTask[]>;
   markTaskRunning?(remoteTaskId: string): Promise<void>;
   renewTaskLease?(remoteTaskId: string): Promise<void>;
   publishMetrics?(metrics: HostMetrics): Promise<void>;
-  reportStopped?(): Promise<void>;
+  reportStopped?(services: PluginServiceSnapshot[]): Promise<void>;
   pushTaskResult(result: TaskResult): Promise<void>;
   reportError(error: WorkerError): Promise<void>;
 }

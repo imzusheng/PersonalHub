@@ -122,6 +122,16 @@ describe('AgentLoop', () => {
     expect(caps).toHaveLength(1);
     expect(caps[0].name).toBe('image.describe');
     expect(caps[0].pluginId).toBe('vision.mock');
+    expect(caps[0].inputSchema).toMatchObject({ type: 'object' });
+  });
+
+  it('每个 tick 同步真实插件健康快照', async () => {
+    const connector = new MockControlPlaneConnector();
+    const agent = new AgentLoop({ connector, pluginRegistry, capabilityRegistry: capRegistry, taskRouter, startedAt: new Date().toISOString(), hostId: 'host-1' });
+    await agent.tick();
+    await agent.tick();
+    expect(connector.getState().serviceSyncCount).toBe(2);
+    expect(connector.getState().services[0]).toMatchObject({ kind: 'vision.mock', status: 'running', controlMode: 'observable', capabilities: ['image.describe'] });
   });
 
   it('pulls remote tasks during tick', async () => {

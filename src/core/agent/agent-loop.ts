@@ -1,4 +1,4 @@
-import type { Connector, RemoteTask, TaskResult } from '../connector/connector.js';
+import type { Connector, PluginServiceSnapshot, RemoteCommand, RemoteTask, TaskResult } from '../connector/connector.js';
 import type { PluginRegistry } from '../domain/plugin-registry.js';
 import type { CapabilityRegistry } from '../domain/capability-registry.js';
 import type { TaskRouter } from '../domain/task-router.js';
@@ -62,6 +62,9 @@ export class AgentLoop {
       this.timer = null;
     }
     await this.inFlightTick;
+    if (this.deps.connector.reportStopped) {
+      await this.deps.connector.reportStopped(await this.buildPluginServices('offline'));
+    }
     this.registered = false;
   }
 
@@ -104,12 +107,21 @@ export class AgentLoop {
         await this.deps.connector.publishMetrics(await collectHostMetrics());
       }
 
+      if (this.deps.connector.syncPluginServices) {
+        await this.deps.connector.syncPluginServices(await this.buildPluginServices());
+      }
+
       const caps = toCapabilitySummaries(this.deps.capabilityRegistry);
       const capabilitiesSignature = JSON.stringify(caps);
       if (capabilitiesSignature !== this.publishedCapabilitiesSignature) {
         await this.deps.connector.publishCapabilities(caps);
         this.publishedCapabilitiesSignature = capabilitiesSignature;
         result.capabilitiesPublished = true;
+      }
+
+      if (this.deps.connector.pullCommands && this.deps.connector.completeCommand) {
+        const commands = await this.deps.connector.pullCommands();
+        for (const command of commands) await this.processCommand(command);
       }
 
       const remoteTasks = await this.deps.connector.pullTasks();
@@ -131,6 +143,26 @@ export class AgentLoop {
     this.lastTick = result;
     this.lastTickAt = new Date().toISOString();
     return result;
+  }
+
+  private async buildPluginServices(forceStatus?: 'offline'): Promise<PluginServiceSnapshot[]> {
+    return Promise.all(this.deps.pluginRegistry.list().map(async (plugin) => {
+      const health = forceStatus ? { ok: false, message: '远程调度已停止' } : await this.deps.taskRouter.checkPluginHealth(plugin.id);
+      return {
+        serviceId: `${plugin.id}:${this.deps.hostId ?? 'local'}`,
+        kind: plugin.id,
+        name: plugin.name,
+        version: plugin.version,
+        status: forceStatus ?? (health.ok ? 'running' : 'error'),
+        controlMode: 'observable',
+        capabilities: plugin.capabilities.map((capability) => capability.name),
+        ...(!health.ok && health.message ? { healthError: health.message } : {}),
+      };
+    }));
+  }
+
+  private async processCommand(command: RemoteCommand): Promise<void> {
+    await this.deps.connector.completeCommand?.(command.commandId, false, `PersonalHub 不支持命令: ${command.type}`);
   }
 
   private async processRemoteTask(remoteTask: RemoteTask, result: TickResult): Promise<void> {
@@ -158,7 +190,18 @@ export class AgentLoop {
 
       taskResult.localTaskId = createResult.task.taskId;
 
-      const execResult = await this.deps.taskRouter.executeTask(createResult.task.taskId);
+      const renewLease = this.deps.connector.renewTaskLease?.bind(this.deps.connector);
+      const renewTimer = renewLease
+        ? setInterval(() => {
+          void renewLease(remoteTask.remoteTaskId).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            return this.deps.connector.reportError({ message: `任务续租失败: ${message}` });
+          });
+        }, 30_000)
+        : null;
+      const execResult = await this.deps.taskRouter.executeTask(createResult.task.taskId).finally(() => {
+        if (renewTimer) clearInterval(renewTimer);
+      });
       if (execResult.success) {
         taskResult.status = 'succeeded';
         taskResult.output = execResult.task.output;
