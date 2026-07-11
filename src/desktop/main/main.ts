@@ -155,6 +155,18 @@ async function bootstrap(): Promise<void> {
     app.setLoginItemSettings({ openAtLogin: config.startOnLogin });
   }
 
+  // 确保 userData/plugins 目录与 extraResources 同步
+  const userPluginsDir = path.join(app.getPath('userData'), 'plugins');
+  const bundledPluginsDir = path.join(process.resourcesPath, 'plugins');
+  if (fs.existsSync(bundledPluginsDir) && !fs.existsSync(path.join(userPluginsDir, 'asr', 'manifest.json'))) {
+    fileLog('seeding plugins from bundled resources');
+    try {
+      fs.cpSync(bundledPluginsDir, userPluginsDir, { recursive: true, force: true });
+    } catch (err) {
+      fileLog(`seed plugins error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   hub = await createPersonalHub({
     connector,
     hostId: config.hostId,

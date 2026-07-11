@@ -58,6 +58,9 @@ export interface WorkerError {
 export interface HostMetrics {
   memoryPercent: number;
   cpuPercent?: number;
+  netRxBytesPerSec?: number;
+  netTxBytesPerSec?: number;
+  diskUsedPercent?: number;
   gpuUtilPercent?: number;
   gpuTempC?: number;
   gpuName?: string;

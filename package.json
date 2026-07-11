@@ -11,6 +11,7 @@
     "build:renderer": "vite build",
     "build": "pnpm build:ts && pnpm build:renderer",
     "pack:win": "pnpm build && electron-builder --win --x64",
+    "pack:mac": "pnpm build && electron-builder --mac --x64",
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -18,7 +19,7 @@
     "lint": "eslint . --ext .ts,.tsx"
   },
   "main": "dist/desktop/main/main.js",
-  "build": {
+    "build": {
     "appId": "cc.zusheng.personalhub",
     "productName": "PersonalHub",
     "directories": {
@@ -30,6 +31,21 @@
       "package.json",
       "pnpm-workspace.yaml"
     ],
+    "extraResources": [
+      {
+        "from": "plugins",
+        "to": "plugins"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "PersonalHub-${version}-${arch}.dmg"
+    },
     "win": {
       "target": [
         {

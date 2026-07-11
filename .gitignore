@@ -3,7 +3,10 @@ dist/
 release/
 *.log
 .DS_Store
+._*
 .env
 .env.local
 coverage/
 .vite/
+.opencode/
+app.asar
