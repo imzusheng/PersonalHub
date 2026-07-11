@@ -342,6 +342,31 @@ function setupIpc(): void {
   });
 
   ipcMain.handle('ph:getPlugins', async () => hub?.pluginRegistry.list() ?? []);
+  ipcMain.handle('ph:disablePlugin', async (_event, pluginId: string) => {
+    if (!hub) return { error: 'Hub not initialized' };
+    const ok = hub.pluginRegistry.disable(pluginId);
+    if (!ok) return { error: `Plugin "${pluginId}" not found` };
+    fileLog(`plugin ${pluginId}: disabled`);
+    return { ok: true };
+  });
+  ipcMain.handle('ph:enablePlugin', async (_event, pluginId: string) => {
+    if (!hub) return { error: 'Hub not initialized' };
+    const ok = hub.pluginRegistry.enable(pluginId);
+    if (!ok) return { error: `Plugin "${pluginId}" not found` };
+    fileLog(`plugin ${pluginId}: enabled`);
+    return { ok: true };
+  });
+  ipcMain.handle('ph:unregisterPlugin', async (_event, pluginId: string) => {
+    if (!hub) return { error: 'Hub not initialized' };
+    const removed = hub.pluginRegistry.unregister(pluginId);
+    if (!removed) return { error: `Plugin "${pluginId}" not found` };
+    // 删除 manifest 文件
+    const manifestPath = path.join(app.getPath('userData'), 'plugins', pluginId, 'manifest.json');
+    try { fs.unlinkSync(manifestPath); } catch { /* 忽略 */ }
+    try { fs.rmdirSync(path.dirname(manifestPath)); } catch { /* 忽略 */ }
+    fileLog(`plugin ${pluginId}: unregistered`);
+    return { ok: true, plugin: removed };
+  });
   ipcMain.handle('ph:getTasks', async () => hub?.taskStore.list() ?? []);
   ipcMain.handle('ph:getLogs', async () => {
     try {

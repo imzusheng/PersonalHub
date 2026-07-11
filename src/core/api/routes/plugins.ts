@@ -34,4 +34,34 @@ export const pluginsRoutes: FastifyPluginAsync<PluginsRouteDeps> = async (app, o
     reply.status(201);
     return regResult.plugin;
   });
+
+  app.delete('/:pluginId', async (req, reply) => {
+    const { pluginId } = req.params as { pluginId: string };
+    const removed = opts.pluginRegistry.unregister(pluginId);
+    if (!removed) {
+      reply.status(404);
+      return { error: { code: 'PLUGIN_NOT_FOUND', message: `Plugin "${pluginId}" not found` } };
+    }
+    return removed;
+  });
+
+  app.post('/:pluginId/disable', async (req, reply) => {
+    const { pluginId } = req.params as { pluginId: string };
+    const ok = opts.pluginRegistry.disable(pluginId);
+    if (!ok) {
+      reply.status(404);
+      return { error: { code: 'PLUGIN_NOT_FOUND', message: `Plugin "${pluginId}" not found` } };
+    }
+    return { ok: true };
+  });
+
+  app.post('/:pluginId/enable', async (req, reply) => {
+    const { pluginId } = req.params as { pluginId: string };
+    const ok = opts.pluginRegistry.enable(pluginId);
+    if (!ok) {
+      reply.status(404);
+      return { error: { code: 'PLUGIN_NOT_FOUND', message: `Plugin "${pluginId}" not found` } };
+    }
+    return { ok: true };
+  });
 };

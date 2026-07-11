@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -21,11 +21,10 @@ jobs:
         run: npm install
       - name: Build Windows installer
         run: npx tsc -p tsconfig.build.json && node scripts/copy-preload.mjs && npx vite build && npx electron-builder --win --x64 --publish never
-      - name: Publish to AdminOS
-        shell: pwsh
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/PersonalHub-Setup-*-x64.exe
+          generate_release_notes: true
         env:
-          ADMINOS_RELEASE_WEBHOOK_URL: ${{ secrets.ADMINOS_RELEASE_WEBHOOK_URL }}
-          ADMINOS_RELEASE_WEBHOOK_TOKEN: ${{ secrets.ADMINOS_RELEASE_WEBHOOK_TOKEN }}
-          PERSONALHUB_RELEASE_CHANNEL: stable
-          PERSONALHUB_VERSION: ${{ github.ref_name }}
-        run: $env:PERSONALHUB_ARTIFACT_PATH = (Get-ChildItem 'release/PersonalHub-Setup-*-x64.exe' | Select-Object -First 1).FullName; node scripts/publish-release.mjs
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

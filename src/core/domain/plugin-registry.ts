@@ -5,6 +5,7 @@ export interface RegisteredPlugin {
   name: string;
   version: string;
   runtime: string;
+  enabled: boolean;
   capabilities: PluginCapability[];
   description?: string;
   runtimeConfig?: Record<string, unknown>;
@@ -52,6 +53,7 @@ export class PluginRegistry {
       name: manifest.name,
       version: manifest.version,
       runtime: manifest.runtime,
+      enabled: true,
       capabilities: manifest.capabilities,
       description: manifest.description,
       runtimeConfig: manifest.runtimeConfig,
@@ -70,6 +72,11 @@ export class PluginRegistry {
     return Array.from(this.plugins.values());
   }
 
+  /** 只返回已启用的插件 */
+  listEnabled(): RegisteredPlugin[] {
+    return Array.from(this.plugins.values()).filter((p) => p.enabled);
+  }
+
   findById(id: string): RegisteredPlugin | undefined {
     return this.plugins.get(id);
   }
@@ -80,5 +87,32 @@ export class PluginRegistry {
 
   getPluginIdForCapability(name: string): string | undefined {
     return this.capabilityToPlugin.get(name);
+  }
+
+  /** 注销插件，清理 capability 映射。返回被移除的插件，不存在时返回 null。 */
+  unregister(id: string): RegisteredPlugin | null {
+    const plugin = this.plugins.get(id);
+    if (!plugin) return null;
+    this.plugins.delete(id);
+    for (const cap of plugin.capabilities) {
+      this.capabilityToPlugin.delete(cap.name);
+    }
+    return plugin;
+  }
+
+  /** 关闭插件（保留注册，暂停任务路由）。返回 false 如果插件不存在。 */
+  disable(id: string): boolean {
+    const plugin = this.plugins.get(id);
+    if (!plugin) return false;
+    plugin.enabled = false;
+    return true;
+  }
+
+  /** 重新启用已关闭的插件。返回 false 如果插件不存在。 */
+  enable(id: string): boolean {
+    const plugin = this.plugins.get(id);
+    if (!plugin) return false;
+    plugin.enabled = true;
+    return true;
   }
 }

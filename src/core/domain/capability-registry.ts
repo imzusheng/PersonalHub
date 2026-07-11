@@ -17,7 +17,7 @@ export class CapabilityRegistry {
 
   list(): CapabilityEntry[] {
     const caps: CapabilityEntry[] = [];
-    for (const plugin of this.pluginRegistry.list()) {
+    for (const plugin of this.pluginRegistry.listEnabled()) {
       for (const cap of plugin.capabilities) {
         caps.push({
           name: cap.name,

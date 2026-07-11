@@ -152,7 +152,7 @@ export class AgentLoop {
   }
 
   private async buildPluginServices(forceStatus?: 'offline'): Promise<PluginServiceSnapshot[]> {
-    return Promise.all(this.deps.pluginRegistry.list().map(async (plugin) => {
+    return Promise.all(this.deps.pluginRegistry.listEnabled().map(async (plugin) => {
       const health = forceStatus ? { ok: false, message: '远程调度已停止' } : await this.deps.taskRouter.checkPluginHealth(plugin.id);
       return {
         serviceId: `${plugin.id}:${this.deps.hostId ?? 'local'}`,
