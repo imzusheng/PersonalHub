@@ -1,0 +1,28 @@
+{
+  "id": "asr",
+  "name": "Qwen ASR",
+  "version": "1.0.0",
+  "runtime": "mock",
+  "capabilities": [
+    {
+      "name": "asr.test",
+      "description": "语音识别——测试隔离，不领取生产 asr 任务",
+      "inputSchema": {
+        "type": "object",
+        "required": ["audioUrl"],
+        "properties": {
+          "audioUrl": { "type": "string" },
+          "language": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string" },
+          "files": { "type": "array" }
+        }
+      }
+    }
+  ],
+  "healthcheck": { "type": "mock" }
+}
