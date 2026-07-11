@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: mac
+            artifact_path: release/PersonalHub-*.dmg
+          - os: windows-2022
+            target: win
+            artifact_path: release/PersonalHub-Setup-*.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: node scripts/generate-icons.mjs
+
+      - run: pnpm build
+
+      - run: pnpm electron-builder --${{ matrix.target }} --x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PersonalHub-${{ matrix.target }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error

@@ -10,3 +10,4 @@ coverage/
 .vite/
 .opencode/
 app.asar
+build/icon.iconset/
