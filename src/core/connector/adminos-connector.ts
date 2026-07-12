@@ -17,6 +17,19 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LEASE_BATCH_SIZE = 5;
 const HOST_AGENT_PROTOCOL_VERSION = '1.0';
 
+export class AdminOSRequestError extends Error {
+  constructor(
+    message: string,
+    readonly operation: string,
+    readonly path: string,
+    readonly status: number | null,
+    readonly timedOut: boolean,
+  ) {
+    super(message);
+    this.name = 'AdminOSRequestError';
+  }
+}
+
 interface FetchResponse {
   ok: boolean;
   status: number;
@@ -32,6 +45,7 @@ export interface AdminOSConnectorConfig {
   hostId: string;
   fetchImpl?: FetchImplementation;
   leaseBatchSize?: number;
+  requestTimeoutMs?: number;
 }
 
 export interface AdminOSUpdatePlan {
@@ -57,6 +71,7 @@ export class AdminOSConnector implements Connector {
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchImplementation;
   private readonly leaseBatchSize: number;
+  private readonly requestTimeoutMs: number;
 
   constructor(private readonly config: AdminOSConnectorConfig) {
     const url = new URL(config.serverUrl);
@@ -69,6 +84,7 @@ export class AdminOSConnector implements Connector {
     this.baseUrl = url.toString().replace(/\/$/, '');
     this.fetchImpl = config.fetchImpl ?? (globalThis.fetch as unknown as FetchImplementation);
     this.leaseBatchSize = Math.min(Math.max(config.leaseBatchSize ?? DEFAULT_LEASE_BATCH_SIZE, 1), 20);
+    this.requestTimeoutMs = Math.max(config.requestTimeoutMs ?? REQUEST_TIMEOUT_MS, 1);
   }
 
   async syncPluginServices(services: PluginServiceSnapshot[]): Promise<void> {
@@ -279,7 +295,8 @@ export class AdminOSConnector implements Connector {
 
   private async request<T>(path: string, init: { method: 'GET' | 'POST'; body?: unknown }): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const operation = `${init.method} ${path}`;
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method: init.method,
@@ -291,13 +308,22 @@ export class AdminOSConnector implements Connector {
         signal: controller.signal,
       });
       const text = await response.text();
-      if (!response.ok) throw new Error(`AdminOS 请求失败: HTTP ${response.status}`);
+      if (!response.ok) {
+        throw new AdminOSRequestError(`AdminOS 请求失败: ${operation} HTTP ${response.status}`, operation, path, response.status, false);
+      }
       if (!text) return undefined as T;
       try {
         return JSON.parse(text) as T;
       } catch {
-        throw new Error('AdminOS 返回了无效 JSON');
+        throw new AdminOSRequestError(`AdminOS 返回了无效 JSON: ${operation}`, operation, path, response.status, false);
       }
+    } catch (error) {
+      if (error instanceof AdminOSRequestError) throw error;
+      const timedOut = error instanceof Error && error.name === 'AbortError';
+      throw new AdminOSRequestError(
+        timedOut ? `AdminOS 请求超时: ${operation}` : `AdminOS 请求失败: ${operation} - ${error instanceof Error ? error.message : String(error)}`,
+        operation, path, null, timedOut,
+      );
     } finally {
       clearTimeout(timer);
     }

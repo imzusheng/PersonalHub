@@ -220,7 +220,8 @@ describe('AgentLoop', () => {
     const result = await agent.tick();
     expect(result.errors).toBe(1);
     expect(connector.getState().errors).toHaveLength(1);
-    expect(connector.getState().errors[0].message).toBe('heartbeat boom');
+    expect(connector.getState().errors[0].message).toBe('[heartbeat] heartbeat boom');
+    expect(agent.getRemoteConnectionState().consecutiveHeartbeatFailures).toBe(1);
   });
 
   it('works with LocalOnlyConnector without throwing', async () => {

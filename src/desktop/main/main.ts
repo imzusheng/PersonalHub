@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import { createPersonalHub, type PersonalHubRuntime } from '../../core/app.js';
-import { parsePluginManifest } from '../../core/domain/plugin-manifest.js';
+import { isRuntimeSupportedOnPlatform, parsePluginManifest } from '../../core/domain/plugin-manifest.js';
 import { MockControlPlaneConnector } from '../../core/connector/mock-control-plane-connector.js';
 import { AdminOSConnector } from '../../core/connector/adminos-connector.js';
 import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js';
@@ -44,6 +44,10 @@ function loadPlugins(pluginsDir: string): void {
         const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
         const result = parsePluginManifest(raw);
         if (result.success) {
+          if (!isRuntimeSupportedOnPlatform(result.data.runtime, process.platform)) {
+            fileLog(`plugin ${entry.name}: skipped - runtime ${result.data.runtime} is unsupported on ${process.platform}`);
+            continue;
+          }
           const regResult = hub.pluginRegistry.register(result.data);
           fileLog(`plugin ${entry.name}: ${regResult.success ? 'registered' : regResult.error?.message}`);
         } else {
@@ -173,6 +177,7 @@ async function bootstrap(): Promise<void> {
     name: config.name,
     mode: connector.mode,
     pluginsDir: path.join(app.getPath('userData'), 'plugins'),
+    diagnosticLogger: fileLog,
   });
 
   loadPersistedTasks(app.getPath('userData'));
@@ -301,6 +306,7 @@ function setupIpc(): void {
   ipcMain.handle('ph:getStatus', async () => {
     if (!hub) return null;
     const lastTick = hub.agent.getLastTick();
+    const remote = hub.agent.getRemoteConnectionState();
     const totalMem = os.totalmem();
     const memoryPercent = totalMem > 0 ? Math.round(((totalMem - os.freemem()) / totalMem) * 100) : 0;
     return {
@@ -309,7 +315,11 @@ function setupIpc(): void {
       agentStatus: hub.agent.isRunning() ? 'running' : 'stopped',
       apiHost: hub.apiHost,
       apiPort: hub.apiPort,
-      lastHeartbeatAt: hub.agent.getLastTickAt(),
+      lastHeartbeatAt: remote.lastHeartbeatSuccessAt,
+      ...remote,
+      configurationIssue: hub.connector.id === 'local-only'
+        ? (!userConfig?.serverUrl ? '缺少 AdminOS Server URL' : !userConfig?.apiKey ? '缺少 AdminOS API Key' : null)
+        : null,
       lastTick,
       pluginCount: hub.pluginRegistry.list().length,
       capabilityCount: hub.capabilityRegistry.list().length,

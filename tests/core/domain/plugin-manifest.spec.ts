@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { parsePluginManifest, type PluginManifest } from '../../../src/core/domain/plugin-manifest.js';
+import { isRuntimeSupportedOnPlatform, parsePluginManifest, type PluginManifest } from '../../../src/core/domain/plugin-manifest.js';
 
 describe('plugin-manifest', () => {
+  it('only enables WSL runtimes on Windows', () => {
+    expect(isRuntimeSupportedOnPlatform('wsl-docker', 'win32')).toBe(true);
+    expect(isRuntimeSupportedOnPlatform('wsl-docker', 'darwin')).toBe(false);
+    expect(isRuntimeSupportedOnPlatform('wsl', 'linux')).toBe(false);
+    expect(isRuntimeSupportedOnPlatform('python-venv', 'darwin')).toBe(true);
+  });
+
   const validManifest: PluginManifest = {
     id: 'vision.mock',
     name: 'Mock Vision',

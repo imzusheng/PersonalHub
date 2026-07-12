@@ -21,6 +21,7 @@ export interface PersonalHubConfig {
   version?: string;
   mode?: string;
   pluginsDir?: string;
+  diagnosticLogger?: (message: string) => void;
 }
 
 export interface PersonalHubRuntime {
@@ -70,6 +71,7 @@ export async function createPersonalHub(config: PersonalHubConfig = {}): Promise
     name: config.name,
     version: config.version ?? DEFAULT_VERSION,
     mode: config.mode ?? DEFAULT_MODE,
+    diagnosticLogger: config.diagnosticLogger,
   });
 
   const { app, port, host } = await startApiServer(

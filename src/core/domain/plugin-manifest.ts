@@ -37,6 +37,11 @@ export type PluginManifest = z.infer<typeof PluginManifestBaseSchema>;
 
 export type PluginCapability = z.infer<typeof CapabilitySchema>;
 
+export function isRuntimeSupportedOnPlatform(runtime: PluginManifest['runtime'], platform: NodeJS.Platform): boolean {
+  if (runtime === 'wsl-docker' || runtime === 'wsl') return platform === 'win32';
+  return true;
+}
+
 export const PluginManifestSchema = PluginManifestBaseSchema.superRefine((manifest, ctx) => {
   const seenNames = new Set<string>();
   for (const cap of manifest.capabilities) {

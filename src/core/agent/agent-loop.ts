@@ -19,6 +19,16 @@ export interface AgentLoopDeps {
   name?: string;
   version?: string;
   mode?: string;
+  diagnosticLogger?: (message: string) => void;
+}
+
+export type RemoteStatus = 'unconfigured' | 'connecting' | 'online' | 'degraded' | 'offline';
+export interface RemoteConnectionState {
+  remoteStatus: RemoteStatus;
+  lastHeartbeatSuccessAt: string | null;
+  lastHeartbeatErrorAt: string | null;
+  consecutiveHeartbeatFailures: number;
+  lastRemoteError: string | null;
 }
 
 export interface TickResult {
@@ -38,6 +48,11 @@ export class AgentLoop {
   private publishedCapabilitiesSignature: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private inFlightTick: Promise<TickResult> | null = null;
+  private lastHeartbeatSuccessAt: string | null = null;
+  private lastHeartbeatErrorAt: string | null = null;
+  private firstHeartbeatFailureAt: string | null = null;
+  private consecutiveHeartbeatFailures = 0;
+  private lastRemoteError: string | null = null;
   /** 活跃任务的取消信号，key = remoteTaskId */
   private cancelMap = new Map<string, AbortController>();
 
@@ -69,7 +84,13 @@ export class AgentLoop {
     }
     await this.inFlightTick;
     if (this.deps.connector.reportStopped) {
-      await this.deps.connector.reportStopped(await this.buildPluginServices('offline'));
+      try {
+        await this.deps.connector.reportStopped(await this.buildPluginServices('offline'));
+      } catch (error) {
+        const message = this.sanitizeError(`[disconnect] ${error instanceof Error ? error.message : String(error)}`);
+        this.lastRemoteError = message;
+        this.deps.diagnosticLogger?.(`remote error ${message}`);
+      }
     }
     this.registered = false;
   }
@@ -88,6 +109,7 @@ export class AgentLoop {
       errors: 0,
     };
 
+    let stage = 'create_snapshot';
     try {
       const snapshot = createHostSnapshot(
         this.deps.pluginRegistry,
@@ -102,34 +124,46 @@ export class AgentLoop {
       );
 
       if (!this.registered) {
+        stage = 'register_host';
         await this.deps.connector.registerHost(snapshot);
         this.registered = true;
       }
 
+      stage = 'heartbeat';
       await this.deps.connector.sendHeartbeat(snapshot);
       result.heartbeatSent = true;
+      this.lastHeartbeatSuccessAt = new Date().toISOString();
+      this.lastHeartbeatErrorAt = null;
+      this.firstHeartbeatFailureAt = null;
+      this.consecutiveHeartbeatFailures = 0;
+      this.lastRemoteError = null;
 
       if (this.deps.connector.publishMetrics) {
+        stage = 'publish_metrics';
         await this.deps.connector.publishMetrics(await collectHostMetrics());
       }
 
       if (this.deps.connector.syncPluginServices) {
+        stage = 'sync_services';
         await this.deps.connector.syncPluginServices(await this.buildPluginServices());
       }
 
       const caps = toCapabilitySummaries(this.deps.capabilityRegistry);
       const capabilitiesSignature = JSON.stringify(caps);
       if (capabilitiesSignature !== this.publishedCapabilitiesSignature) {
+        stage = 'publish_capabilities';
         await this.deps.connector.publishCapabilities(caps);
         this.publishedCapabilitiesSignature = capabilitiesSignature;
         result.capabilitiesPublished = true;
       }
 
       if (this.deps.connector.pullCommands && this.deps.connector.completeCommand) {
+        stage = 'pull_commands';
         const commands = await this.deps.connector.pullCommands();
         for (const command of commands) await this.processCommand(command);
       }
 
+      stage = 'pull_tasks';
       const remoteTasks = await this.deps.connector.pullTasks();
       result.tasksProcessed = remoteTasks.length;
 
@@ -138,7 +172,16 @@ export class AgentLoop {
       }
     } catch (err) {
       result.errors += 1;
-      const message = err instanceof Error ? err.message : String(err);
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      const message = this.sanitizeError(`[${stage}] ${rawMessage}`);
+      if (!result.heartbeatSent) {
+        const now = new Date().toISOString();
+        this.lastHeartbeatErrorAt = now;
+        this.firstHeartbeatFailureAt ??= now;
+        this.consecutiveHeartbeatFailures += 1;
+      }
+      this.lastRemoteError = message;
+      this.deps.diagnosticLogger?.(`remote error ${message}`);
       try {
         await this.deps.connector.reportError({ message, details: err });
       } catch {
@@ -270,6 +313,30 @@ export class AgentLoop {
 
   getLastTickAt(): string | null {
     return this.lastTickAt;
+  }
+
+  getRemoteConnectionState(now = Date.now()): RemoteConnectionState {
+    if (this.deps.connector.mode === 'local-only') {
+      return { remoteStatus: 'unconfigured', lastHeartbeatSuccessAt: null, lastHeartbeatErrorAt: null, consecutiveHeartbeatFailures: 0, lastRemoteError: null };
+    }
+    const staleMs = 5 * 60 * 1000;
+    const lastSuccessMs = this.lastHeartbeatSuccessAt ? Date.parse(this.lastHeartbeatSuccessAt) : 0;
+    const firstFailureMs = this.firstHeartbeatFailureAt ? Date.parse(this.firstHeartbeatFailureAt) : 0;
+    let remoteStatus: RemoteStatus;
+    if (!this.isRunning()) remoteStatus = 'offline';
+    else if (lastSuccessMs && now - lastSuccessMs >= staleMs) remoteStatus = 'offline';
+    else if (!lastSuccessMs && firstFailureMs && now - firstFailureMs >= staleMs) remoteStatus = 'offline';
+    else if (this.consecutiveHeartbeatFailures > 0 || this.lastRemoteError) remoteStatus = 'degraded';
+    else if (lastSuccessMs) remoteStatus = 'online';
+    else remoteStatus = 'connecting';
+    return { remoteStatus, lastHeartbeatSuccessAt: this.lastHeartbeatSuccessAt, lastHeartbeatErrorAt: this.lastHeartbeatErrorAt, consecutiveHeartbeatFailures: this.consecutiveHeartbeatFailures, lastRemoteError: this.lastRemoteError };
+  }
+
+  private sanitizeError(message: string): string {
+    return message
+      .replace(/(x-api-key|api[_ -]?key|authorization)(\s*[:=]\s*)[^\s,;]+/gi, '$1$2[redacted]')
+      .replace(/(bearer\s+)[a-z0-9._~+\/-]+/gi, '$1[redacted]')
+      .slice(0, 1000);
   }
 
   /** 取消指定任务的执行 */
