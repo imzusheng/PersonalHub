@@ -7,6 +7,7 @@ import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js
 import type { Connector } from '../../core/connector/connector.js';
 import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config.js';
 import { UpdateService } from './update-service.js';
+import { ArtifactLayer } from '../../core/artifact/artifact-layer.js';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,6 +179,9 @@ async function bootstrap(): Promise<void> {
     mode: connector.mode,
     pluginsDir: path.join(app.getPath('userData'), 'plugins'),
     diagnosticLogger: fileLog,
+    ...(connector instanceof AdminOSConnector && config.serverUrl && apiKey
+      ? { artifactLayer: new ArtifactLayer({ connector, baseUrl: config.serverUrl, apiKey }) }
+      : {}),
   });
 
   loadPersistedTasks(app.getPath('userData'));
