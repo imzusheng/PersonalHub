@@ -30,11 +30,38 @@ let mainWindow: BrowserWindow | null = null;
 let agentIntervalMs = 30_000;
 let userConfig: UserConfig | null = null;
 let updateService: UpdateService | null = null;
+let pluginsPath = '';
+
+interface PluginCatalogItem {
+  id: string; name: string; version: string; runtime: string; description?: string;
+  capabilities: Array<{ name: string; description?: string }>;
+  enabled: boolean;
+  status: 'registered' | 'disabled' | 'unsupported' | 'error';
+  reason?: string;
+  directoryPath: string;
+}
+const pluginCatalog = new Map<string, PluginCatalogItem>();
+
+function pluginStatePath(): string { return path.join(app.getPath('userData'), 'plugins-state.json'); }
+function readDisabledPlugins(): Set<string> {
+  try {
+    const value = JSON.parse(fs.readFileSync(pluginStatePath(), 'utf-8')) as { disabledIds?: unknown };
+    return new Set(Array.isArray(value.disabledIds) ? value.disabledIds.filter((id): id is string => typeof id === 'string') : []);
+  } catch { return new Set(); }
+}
+function writeDisabledPlugins(ids: Set<string>): void {
+  const target = pluginStatePath();
+  const temporary = `${target}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify({ disabledIds: [...ids].sort() }, null, 2)}\n`, 'utf-8');
+  fs.renameSync(temporary, target);
+}
 
 const USE_MOCK_CONTROL_PLANE = process.env.PERSONALHUB_CONNECTOR === 'mock-cp';
 
 function loadPlugins(pluginsDir: string): void {
   if (!hub) return;
+  pluginCatalog.clear();
+  const disabled = readDisabledPlugins();
   try {
     const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -45,11 +72,29 @@ function loadPlugins(pluginsDir: string): void {
         const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
         const result = parsePluginManifest(raw);
         if (result.success) {
+          const catalogItem: PluginCatalogItem = {
+            id: result.data.id, name: result.data.name, version: result.data.version,
+            runtime: result.data.runtime, description: result.data.description,
+            capabilities: result.data.capabilities.map(({ name, description }) => ({ name, description })),
+            enabled: !disabled.has(result.data.id), status: 'registered', directoryPath: path.join(pluginsDir, entry.name),
+          };
+          pluginCatalog.set(result.data.id, catalogItem);
+          if (!catalogItem.enabled) {
+            catalogItem.status = 'disabled';
+            fileLog(`plugin ${entry.name}: disabled`);
+            continue;
+          }
           if (!isRuntimeSupportedOnPlatform(result.data.runtime, process.platform)) {
+            catalogItem.status = 'unsupported';
+            catalogItem.reason = `runtime ${result.data.runtime} is unsupported on ${process.platform}`;
             fileLog(`plugin ${entry.name}: skipped - runtime ${result.data.runtime} is unsupported on ${process.platform}`);
             continue;
           }
           const regResult = hub.pluginRegistry.register(result.data);
+          if (!regResult.success) {
+            catalogItem.status = 'error';
+            catalogItem.reason = regResult.error?.message;
+          }
           fileLog(`plugin ${entry.name}: ${regResult.success ? 'registered' : regResult.error?.message}`);
         } else {
           fileLog(`plugin ${entry.name}: manifest invalid - ${result.error.message}`);
@@ -162,8 +207,9 @@ async function bootstrap(): Promise<void> {
 
   // 确保 userData/plugins 目录与 extraResources 同步
   const userPluginsDir = path.join(app.getPath('userData'), 'plugins');
+  pluginsPath = userPluginsDir;
   const bundledPluginsDir = path.join(process.resourcesPath, 'plugins');
-  if (fs.existsSync(bundledPluginsDir) && !fs.existsSync(path.join(userPluginsDir, 'asr', 'manifest.json'))) {
+  if (fs.existsSync(bundledPluginsDir) && !fs.existsSync(userPluginsDir)) {
     fileLog('seeding plugins from bundled resources');
     try {
       fs.cpSync(bundledPluginsDir, userPluginsDir, { recursive: true, force: true });
@@ -355,7 +401,29 @@ function setupIpc(): void {
     return { ok: true };
   });
 
-  ipcMain.handle('ph:getPlugins', async () => hub?.pluginRegistry.list() ?? []);
+  ipcMain.handle('ph:getPlugins', async () => [...pluginCatalog.values()].map(({ directoryPath: _directoryPath, ...plugin }) => plugin));
+  ipcMain.handle('ph:setPluginEnabled', async (_event, pluginId: string, enabled: boolean) => {
+    const plugin = pluginCatalog.get(pluginId);
+    if (!plugin) throw new Error('插件不存在');
+    const disabled = readDisabledPlugins();
+    if (enabled) disabled.delete(pluginId); else disabled.add(pluginId);
+    writeDisabledPlugins(disabled);
+    fileLog(`plugin ${pluginId}: ${enabled ? 'enabled' : 'disabled'}; restart required`);
+    return { ok: true, restartRequired: true };
+  });
+  ipcMain.handle('ph:deletePlugin', async (_event, pluginId: string) => {
+    const plugin = pluginCatalog.get(pluginId);
+    if (!plugin) throw new Error('插件不存在');
+    const relative = path.relative(pluginsPath, plugin.directoryPath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('插件路径不安全');
+    fs.rmSync(plugin.directoryPath, { recursive: true, force: true });
+    const disabled = readDisabledPlugins();
+    disabled.delete(pluginId);
+    writeDisabledPlugins(disabled);
+    pluginCatalog.delete(pluginId);
+    fileLog(`plugin ${pluginId}: deleted; restart required`);
+    return { ok: true, restartRequired: true };
+  });
   ipcMain.handle('ph:getTasks', async () => hub?.taskStore.list() ?? []);
   ipcMain.handle('ph:getLogs', async () => {
     try {

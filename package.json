@@ -10,7 +10,7 @@
     "build:ts": "tsc -p tsconfig.build.json && node scripts/copy-preload.mjs",
     "build:renderer": "vite build",
     "build": "pnpm build:ts && pnpm build:renderer",
-    "pack:win": "pnpm build && electron-builder --win --x64",
+    "pack:win": "node scripts/generate-icons.mjs && pnpm build && electron-builder --win --x64",
     "pack:mac": "pnpm build && electron-builder --mac --x64",
     "start": "tsx src/index.ts",
     "test": "vitest run",
@@ -47,6 +47,7 @@
       "artifactName": "PersonalHub-${version}-${arch}.dmg"
     },
     "win": {
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",
@@ -56,6 +57,7 @@
       "artifactName": "PersonalHub-Setup-${version}-${arch}.exe"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

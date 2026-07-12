@@ -1,13 +1,13 @@
 interface TickResult { heartbeatSent:boolean; capabilitiesPublished:boolean; tasksProcessed:number; succeeded:number; failed:number; errors:number }
 type RemoteStatus='unconfigured'|'connecting'|'online'|'degraded'|'offline';
 interface StatusResponse { mode:string; connector:string; agentStatus:string; apiHost:string; apiPort:number; lastHeartbeatAt:string|null; lastHeartbeatSuccessAt:string|null; lastHeartbeatErrorAt:string|null; consecutiveHeartbeatFailures:number; lastRemoteError:string|null; remoteStatus:RemoteStatus; configurationIssue:string|null; lastTick:TickResult|null; pluginCount:number; capabilityCount:number; startedAt:string; hostId:string|null; memoryPercent:number; taskCount:number; platform:string }
-interface PluginSummary { id:string; name:string; version:string; runtime:string; description?:string; capabilities:Array<{name:string;description?:string}> }
+interface PluginSummary { id:string; name:string; version:string; runtime:string; description?:string; capabilities:Array<{name:string;description?:string}>; enabled:boolean; status:'registered'|'disabled'|'unsupported'|'error'; reason?:string }
 interface TaskSummary { taskId:string; capability:string; status:string; output:unknown; error:{message:string}|null; updatedAt:string }
 interface ConfigResponse { hostId:string; name:string; serverUrl:string|null; apiKey:string|null; agentIntervalMs:number; startOnLogin:boolean; apiKeyConfigured:boolean }
 interface UpdatePlan { deploymentId:string; artifactUrl:string; artifactName:string; artifactSha256:string; artifactSizeBytes:number }
 interface PersonalHubApi {
   getStatus():Promise<StatusResponse|null>; runAgentTick():Promise<TickResult>; startAgent():Promise<{ok?:boolean;error?:string}>; stopAgent():Promise<{ok?:boolean;error?:string}>;
-  getPlugins():Promise<PluginSummary[]>; getTasks():Promise<TaskSummary[]>; getLogs():Promise<string>; getConfig():Promise<ConfigResponse|null>;
+  getPlugins():Promise<PluginSummary[]>; setPluginEnabled(pluginId:string,enabled:boolean):Promise<{ok:boolean;restartRequired:boolean}>; deletePlugin(pluginId:string):Promise<{ok:boolean;restartRequired:boolean}>; getTasks():Promise<TaskSummary[]>; getLogs():Promise<string>; getConfig():Promise<ConfigResponse|null>;
   saveConfig(patch:Partial<Omit<ConfigResponse,'hostId'|'apiKeyConfigured'>>):Promise<ConfigResponse>; checkUpdate():Promise<UpdatePlan|null>; downloadUpdate(plan:UpdatePlan):Promise<string>; restartApp():Promise<void>; log(msg:string):Promise<void>;
 }
 declare global { interface Window { personalhub?:PersonalHubApi } }
@@ -58,7 +58,7 @@ async function renderTab(status:StatusResponse):Promise<string>{
   const hostMeta=`<code class="host-id">${esc(status.hostId??'未分配 Host ID')}</code>`;
   if(activeTab==='plugins'){
     const plugins=await window.personalhub!.getPlugins();
-    const body=plugins.length?`<div class="grid plugin-grid">${plugins.map((plugin)=>card(`<div class="task-head"><div class="icon-box">${esc(plugin.name.slice(0,1).toUpperCase())}</div><span class="badge ok">已注册</span></div><h3>${esc(plugin.name)}</h3><p>${esc(plugin.description??`${plugin.runtime} · ${plugin.version}`)}</p><div class="chips">${plugin.capabilities.map((cap)=>`<span class="chip">${esc(cap.name)}</span>`).join('')}</div><div class="mono" style="margin-top:16px">${esc(plugin.id)} · ${esc(plugin.runtime)}</div>`,'plugin-card')).join('')}</div>`:`<div class="empty"><div><strong>尚未安装插件</strong><span>把插件放入 PersonalHub 数据目录后重启应用</span></div></div>`;
+    const body=plugins.length?`<div class="grid plugin-grid">${plugins.map((plugin)=>card(`<div class="task-head"><div class="icon-box">${esc(plugin.name.slice(0,1).toUpperCase())}</div><span class="badge ${plugin.status==='registered'?'ok':plugin.status==='error'?'fail':'warn'}">${esc(plugin.status)}</span></div><h3>${esc(plugin.name)}</h3><p>${esc(plugin.reason??plugin.description??`${plugin.runtime} · ${plugin.version}`)}</p><div class="chips">${plugin.capabilities.map((cap)=>`<span class="chip">${esc(cap.name)}</span>`).join('')}</div><div class="mono" style="margin-top:16px">${esc(plugin.id)} · ${esc(plugin.runtime)}</div><div class="toolbar" style="margin-top:16px"><button class="tool-btn" data-plugin-toggle="${esc(plugin.id)}" data-plugin-enabled="${plugin.enabled}">${plugin.enabled?'禁用':'启用'}</button><button class="tool-btn danger" data-plugin-delete="${esc(plugin.id)}">删除</button></div>`,'plugin-card')).join('')}</div>`:`<div class="empty"><div><strong>尚未安装插件</strong><span>把插件放入 PersonalHub 数据目录后重启应用</span></div></div>`;
     return pageHead('Capabilities','插件','本机真实可调用的模型与工具',hostMeta)+body;
   }
   if(activeTab==='tasks'){
@@ -101,6 +101,8 @@ function toast(message:string):void{document.querySelector('.toast')?.remove();c
 async function runAction(button:HTMLButtonElement|undefined,action:()=>Promise<void>):Promise<void>{if(button)button.disabled=true;try{await action()}catch(error){toast(error instanceof Error?error.message:String(error))}finally{if(button)button.disabled=false}}
 function bindEvents():void{
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button)=>button.addEventListener('click',()=>{activeTab=button.dataset.tab as Tab;void render()}));
+  document.querySelectorAll<HTMLButtonElement>('[data-plugin-toggle]').forEach((button)=>button.addEventListener('click',()=>void runAction(button,async()=>{const id=button.dataset.pluginToggle!;const enabled=button.dataset.pluginEnabled==='true';await window.personalhub!.setPluginEnabled(id,!enabled);toast(`${enabled?'已禁用':'已启用'} ${id}，重启后生效`);await render()})));
+  document.querySelectorAll<HTMLButtonElement>('[data-plugin-delete]').forEach((button)=>button.addEventListener('click',()=>{const id=button.dataset.pluginDelete!;if(!window.confirm(`确认删除插件 ${id}？此操作会删除插件目录。`))return;void runAction(button,async()=>{await window.personalhub!.deletePlugin(id);toast(`已删除 ${id}，重启后同步服务列表`);await render()})}));
   document.getElementById('topRefresh')?.addEventListener('click',()=>void render());document.getElementById('refreshLogs')?.addEventListener('click',()=>void render());
   const toggle=document.getElementById('toggleScheduling') as HTMLButtonElement|undefined;toggle?.addEventListener('click',()=>void runAction(toggle,async()=>{const status=await window.personalhub!.getStatus();if(status?.agentStatus==='running')await window.personalhub!.stopAgent();else await window.personalhub!.startAgent();await render()}));
   const runTick=document.getElementById('runTick') as HTMLButtonElement|undefined;runTick?.addEventListener('click',()=>void runAction(runTick,async()=>{const result=await window.personalhub!.runAgentTick();toast(`同步完成 · ${result.tasksProcessed} 个任务`);await render()}));
