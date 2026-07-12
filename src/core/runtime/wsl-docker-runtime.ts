@@ -93,6 +93,11 @@ export class WslDockerRuntime implements RuntimeAdapter {
       containerInput['_inputDir'] = wslInputDir;
       containerInput['_outputDir'] = wslOutputDir;
 
+      // 推理服务运行在 Docker 容器内，WSL 主机的 /tmp 默认不会自动挂载进去。
+      // 显式复制输入，确保传给 /infer 的路径在容器内真实存在。
+      this.wslExec(`docker exec "${cfg.containerName}" mkdir -p "${wslInputDir}" "${wslOutputDir}"`, cfg.wslDistro);
+      this.wslExec(`docker cp "${wslInputDir}/." "${cfg.containerName}:${wslInputDir}/"`, cfg.wslDistro);
+
       // 4. 调容器 HTTP API
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
@@ -122,6 +127,9 @@ export class WslDockerRuntime implements RuntimeAdapter {
         throw new Error('容器返回了无效 JSON');
       }
       const output = parsed as Record<string, unknown>;
+
+      // 将容器生成的文件复制回 WSL，后续 ArtifactLayer 才能收集并上传。
+      this.wslExec(`docker cp "${cfg.containerName}:${wslOutputDir}/." "${wslOutputDir}/"`, cfg.wslDistro);
 
       // 6. 如果容器返回了 files 清单，补充完整路径
       if (Array.isArray(output['files'])) {
