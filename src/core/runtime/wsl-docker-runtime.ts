@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import type { RuntimeAdapter, ExecuteTaskParams, ExecuteTaskResult, HealthCheckResult } from './runtime-adapter.js';
 import type { RegisteredPlugin } from '../domain/plugin-registry.js';
 
@@ -80,9 +81,10 @@ export class WslDockerRuntime implements RuntimeAdapter {
         for (const [key, value] of Object.entries(input)) {
           if (key.startsWith('_')) continue; // 跳过内部字段
           if (key.endsWith('Local')) {
-            // 本地路径 → WSL 路径
+            // ArtifactLayer 已把整个 inputDir 复制到 WSL 临时目录；容器应使用该副本，
+            // 不能继续引用 Windows 的 /mnt/c 路径（容器通常未挂载 Windows 文件系统）。
             const plainKey = key.replace(/Local$/, '');
-            containerInput[plainKey] = this.toWslPath(value as string, cfg.wslDistro);
+            containerInput[plainKey] = `${wslInputDir}/${path.win32.basename(value as string)}`;
           } else {
             containerInput[key] = value;
           }
