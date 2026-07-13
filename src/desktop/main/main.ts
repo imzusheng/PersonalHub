@@ -9,6 +9,7 @@ import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config
 import { UpdateService } from './update-service.js';
 import { ArtifactLayer } from '../../core/artifact/artifact-layer.js';
 import { collectHostMetrics } from '../../core/agent/host-metrics.js';
+import type { HostMetrics } from '../../core/connector/connector.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -16,10 +17,14 @@ import fs from 'node:fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let logFile = '';
+let logsPath = '';
+let metricsTimer: NodeJS.Timeout | null = null;
+let storageCache: { at: number; value: StorageInfo } | null = null;
 
 function fileLog(msg: string): void {
   const ts = new Date().toISOString();
   const line = `[${ts}] ${msg}\n`;
+  if (logsPath) logFile = path.join(logsPath, `personalhub-${dateStamp()}.log`);
   try { fs.appendFileSync(logFile, line, 'utf-8'); } catch { /* 静默 */ }
   console.log(`[RENDERER] ${msg}`);
 }
@@ -49,6 +54,74 @@ interface PluginCatalogItem {
   directoryPath: string;
 }
 const pluginCatalog = new Map<string, PluginCatalogItem>();
+
+interface StorageInfo {
+  logsPath: string;
+  cachePath: string;
+  pluginsPath: string;
+  logsBytes: number;
+  cacheBytes: number;
+  pluginsBytes: number;
+}
+
+function dateStamp(date = new Date()): string { return date.toISOString().slice(0, 10); }
+function metricsFile(date = new Date()): string { return path.join(logsPath, `metrics-${dateStamp(date)}.jsonl`); }
+
+function cleanupDiagnostics(retentionDays: number): void {
+  const cutoff = Date.now() - retentionDays * 86_400_000;
+  try {
+    for (const entry of fs.readdirSync(logsPath, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^(personalhub|metrics)-\d{4}-\d{2}-\d{2}\.(log|jsonl)$/.test(entry.name)) continue;
+      const target = path.join(logsPath, entry.name);
+      if (fs.statSync(target).mtimeMs < cutoff) fs.rmSync(target, { force: true });
+    }
+  } catch { /* diagnostics cleanup is best effort */ }
+}
+
+function persistMetrics(metrics: HostMetrics): void {
+  try { fs.appendFileSync(metricsFile(), `${JSON.stringify(metrics)}\n`, 'utf-8'); } catch { /* best effort */ }
+}
+
+async function directorySize(root: string, limit = 20_000): Promise<number> {
+  let total = 0; let visited = 0; const pending = [root];
+  while (pending.length && visited < limit) {
+    const current = pending.pop()!;
+    let entries: fs.Dirent[];
+    try { entries = await fs.promises.readdir(current, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (visited++ >= limit) break;
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(target);
+      else if (entry.isFile()) { try { total += (await fs.promises.stat(target)).size; } catch { /* disappeared */ } }
+    }
+  }
+  return total;
+}
+
+async function getStorageInfo(): Promise<StorageInfo> {
+  if (storageCache && Date.now() - storageCache.at < 60_000) return storageCache.value;
+  const cachePath = path.join(app.getPath('sessionData'), 'Cache');
+  const [logsBytes, cacheBytes, pluginsBytes] = await Promise.all([directorySize(logsPath), directorySize(cachePath), directorySize(pluginsPath)]);
+  const value = { logsPath, cachePath, pluginsPath, logsBytes, cacheBytes, pluginsBytes };
+  storageCache = { at: Date.now(), value };
+  return value;
+}
+
+function readMetricHistory(range: 'minute' | 'hour'): HostMetrics[] {
+  const since = Date.now() - (range === 'minute' ? 60_000 : 3_600_000);
+  const files = [metricsFile(new Date(Date.now() - 86_400_000)), metricsFile()];
+  const samples: HostMetrics[] = [];
+  for (const file of files) {
+    try {
+      for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
+        if (!line) continue;
+        const sample = JSON.parse(line) as HostMetrics;
+        if (typeof sample.recordedAt === 'number' && sample.recordedAt >= since) samples.push(sample);
+      }
+    } catch { /* no metrics file yet */ }
+  }
+  return samples.slice(range === 'minute' ? -30 : -120);
+}
 
 function pluginStatePath(): string { return path.join(app.getPath('userData'), 'plugins-state.json'); }
 function readDisabledPlugins(): Set<string> {
@@ -434,6 +507,7 @@ function setupIpc(): void {
   });
 
   ipcMain.handle('ph:getMetrics', async () => collectHostMetrics());
+  ipcMain.handle('ph:getMetricHistory', async (_event, range: 'minute' | 'hour') => readMetricHistory(range));
 
   ipcMain.handle('ph:runAgentTick', async () => {
     if (!hub) return { error: 'Hub not initialized' };
@@ -614,8 +688,18 @@ function setupIpc(): void {
     apiKey: userConfig.apiKey ? '••••••••' : null,
     agentIntervalMs: userConfig.agentIntervalMs,
     startOnLogin: userConfig.startOnLogin,
+    logRetentionDays: userConfig.logRetentionDays,
     apiKeyConfigured: Boolean(userConfig.apiKey),
   } : null);
+  ipcMain.handle('ph:getStorageInfo', async () => getStorageInfo());
+  ipcMain.handle('ph:openStoragePath', async (_event, kind: 'logs' | 'cache' | 'plugins') => {
+    const info = await getStorageInfo();
+    const target = kind === 'logs' ? info.logsPath : kind === 'cache' ? info.cachePath : info.pluginsPath;
+    fs.mkdirSync(target, { recursive: true });
+    const error = await shell.openPath(target);
+    if (error) throw new Error(error);
+    return { ok: true };
+  });
   ipcMain.handle('ph:saveConfig', async (_event, patch: Partial<Omit<UserConfig, 'hostId'>>) => {
     if (!userConfig) throw new Error('Hub not initialized');
     userConfig = updateUserConfig(app.getPath('userData'), userConfig, patch);
@@ -623,6 +707,8 @@ function setupIpc(): void {
     if (process.platform === 'win32') {
       app.setLoginItemSettings({ openAtLogin: userConfig.startOnLogin });
     }
+    cleanupDiagnostics(userConfig.logRetentionDays);
+    storageCache = null;
     return userConfig;
   });
   ipcMain.handle('ph:checkUpdate', async () => updateService?.check() ?? null);
@@ -641,12 +727,15 @@ function setupIpc(): void {
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  const logsPath = app.getPath('logs');
+  logsPath = app.getPath('logs');
   fs.mkdirSync(logsPath, { recursive: true });
-  logFile = path.join(logsPath, 'personalhub-debug.log');
-  try { fs.writeFileSync(logFile, '', 'utf-8'); } catch { /* 静默 */ }
+  logFile = path.join(logsPath, `personalhub-${dateStamp()}.log`);
   fileLog('--- PersonalHub START ---');
   await bootstrap();
+  cleanupDiagnostics(userConfig?.logRetentionDays ?? 7);
+  const recordMetrics = async () => { try { persistMetrics(await collectHostMetrics()); } catch { /* best effort */ } };
+  void recordMetrics();
+  metricsTimer = setInterval(() => { void recordMetrics(); }, 30_000);
   setupIpc();
   createTray();
   updateTrayStatus();
@@ -668,6 +757,7 @@ app.on('before-quit', (event) => {
   shutdownStarted = true;
   event.preventDefault();
   fileLog('before-quit');
+  if (metricsTimer) clearInterval(metricsTimer);
   void (async () => {
     try {
       if (hub) {

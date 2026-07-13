@@ -13,6 +13,7 @@ interface PersistedUserConfig {
   apiKey?: string;
   agentIntervalMs?: number;
   startOnLogin?: boolean;
+  logRetentionDays?: number;
 }
 
 export interface UserConfig {
@@ -22,6 +23,7 @@ export interface UserConfig {
   apiKey: string | null;
   agentIntervalMs: number;
   startOnLogin: boolean;
+  logRetentionDays: number;
 }
 
 function readConfig(configFile: string): PersistedUserConfig {
@@ -38,6 +40,10 @@ function normalizeInterval(value: number | undefined): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= MIN_AGENT_INTERVAL_MS
     ? value
     : DEFAULT_AGENT_INTERVAL_MS;
+}
+
+function normalizeRetentionDays(value: number | undefined): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 90 ? value : 7;
 }
 
 function normalizeServerUrl(value: string | undefined): string | null {
@@ -57,6 +63,7 @@ export function loadUserConfig(userDataPath: string): UserConfig {
     apiKey: process.env.PERSONALHUB_API_KEY?.trim() || persisted.apiKey?.trim() || null,
     agentIntervalMs: normalizeInterval(Number(process.env.PERSONALHUB_AGENT_INTERVAL_MS) || persisted.agentIntervalMs),
     startOnLogin: persisted.startOnLogin ?? false,
+    logRetentionDays: normalizeRetentionDays(persisted.logRetentionDays),
   };
   saveUserConfig(userDataPath, config);
   return config;
@@ -73,6 +80,7 @@ export function saveUserConfig(userDataPath: string, config: UserConfig): void {
     apiKey: config.apiKey ?? undefined,
     agentIntervalMs: config.agentIntervalMs,
     startOnLogin: config.startOnLogin,
+    logRetentionDays: config.logRetentionDays,
   };
   fs.writeFileSync(temporaryFile, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
   fs.renameSync(temporaryFile, configFile);
@@ -86,6 +94,7 @@ export function updateUserConfig(userDataPath: string, current: UserConfig, patc
     apiKey: patch.apiKey === undefined ? current.apiKey : (patch.apiKey?.trim() || null),
     agentIntervalMs: patch.agentIntervalMs === undefined ? current.agentIntervalMs : normalizeInterval(patch.agentIntervalMs),
     startOnLogin: patch.startOnLogin ?? current.startOnLogin,
+    logRetentionDays: patch.logRetentionDays === undefined ? current.logRetentionDays : normalizeRetentionDays(patch.logRetentionDays),
   };
   saveUserConfig(userDataPath, next);
   return next;
