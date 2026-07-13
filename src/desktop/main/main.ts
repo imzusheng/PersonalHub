@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } from 'electron';
 import { createPersonalHub, type PersonalHubRuntime } from '../../core/app.js';
 import { isRuntimeSupportedOnPlatform, parsePluginManifest } from '../../core/domain/plugin-manifest.js';
 import { MockControlPlaneConnector } from '../../core/connector/mock-control-plane-connector.js';
@@ -128,6 +128,43 @@ function persistTask(userData: string, task: Record<string, unknown>): void {
   } catch { /* 静默 */ }
 }
 
+interface TaskArtifact {
+  name: string;
+  localPath: string;
+  exists: boolean;
+  sizeBytes: number | null;
+}
+
+function getTaskArtifacts(output: unknown): TaskArtifact[] {
+  if (!output || typeof output !== 'object') return [];
+  const files = (output as Record<string, unknown>).files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((value): TaskArtifact[] => {
+    if (typeof value === 'string') {
+      let exists = false;
+      let sizeBytes: number | null = null;
+      try {
+        const stat = fs.statSync(value);
+        exists = stat.isFile();
+        sizeBytes = exists ? stat.size : null;
+      } catch { /* missing artifacts remain visible with their original path */ }
+      return [{ name: path.basename(value), localPath: value, exists, sizeBytes }];
+    }
+    if (!value || typeof value !== 'object') return [];
+    const file = value as Record<string, unknown>;
+    const localPath = typeof file.localPath === 'string' ? file.localPath : typeof file.path === 'string' ? file.path : null;
+    if (!localPath) return [];
+    let exists = false;
+    let sizeBytes: number | null = null;
+    try {
+      const stat = fs.statSync(localPath);
+      exists = stat.isFile();
+      sizeBytes = exists ? stat.size : null;
+    } catch { /* missing artifacts remain visible with their original path */ }
+    return [{ name: typeof file.name === 'string' ? file.name : path.basename(localPath), localPath, exists, sizeBytes }];
+  });
+}
+
 function loadPersistedTasks(userData: string): void {
   if (!hub) return;
   const tasksPath = getTasksPath(userData);
@@ -145,6 +182,7 @@ function loadPersistedTasks(userData: string): void {
     }
     let restored = 0;
     for (const task of latest.values()) {
+      if (task.deleted === true) continue;
       if (typeof task.taskId !== 'string' || typeof task.capability !== 'string') continue;
       const existing = hub.taskStore.findById(task.taskId);
           if (existing) {
@@ -459,7 +497,9 @@ function setupIpc(): void {
     fileLog(`plugin ${pluginId}: deleted; restart required`);
     return { ok: true, restartRequired: true };
   });
-  ipcMain.handle('ph:getTasks', async () => hub?.taskStore.list() ?? []);
+  ipcMain.handle('ph:getTasks', async () => (hub?.taskStore.list() ?? [])
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map((task) => ({ ...task, artifacts: getTaskArtifacts(task.output) })));
   ipcMain.handle('ph:getCapabilities', async () => hub?.capabilityRegistry.list() ?? []);
   ipcMain.handle('ph:createTask', async (_event, capability: string, input: unknown, execute: boolean) => {
     if (!hub) throw new Error('Hub not initialized');
@@ -468,6 +508,34 @@ function setupIpc(): void {
     if (!execute) return created.task;
     const executed = await hub.taskRouter.executeTask(created.task.taskId);
     return executed.task;
+  });
+  ipcMain.handle('ph:revealArtifact', async (_event, taskId: string, localPath: string) => {
+    const task = hub?.taskStore.findById(taskId);
+    if (!task) throw new Error('任务不存在');
+    const artifact = getTaskArtifacts(task.output).find((item) => item.localPath === localPath);
+    if (!artifact) throw new Error('该路径不属于此任务');
+    if (!artifact.exists) throw new Error(`产物已不存在：${localPath}`);
+    shell.showItemInFolder(localPath);
+    return { ok: true };
+  });
+  ipcMain.handle('ph:deleteTask', async (_event, taskId: string, deleteArtifacts: boolean) => {
+    if (!hub) throw new Error('Hub not initialized');
+    const task = hub.taskStore.findById(taskId);
+    if (!task) throw new Error('任务不存在');
+    let deletedArtifacts = 0;
+    if (deleteArtifacts) {
+      for (const artifact of getTaskArtifacts(task.output)) {
+        try {
+          if (fs.statSync(artifact.localPath).isFile()) {
+            fs.rmSync(artifact.localPath, { force: true });
+            deletedArtifacts += 1;
+          }
+        } catch { /* already missing */ }
+      }
+    }
+    hub.taskStore.delete(taskId);
+    persistTask(app.getPath('userData'), { taskId, deleted: true, deletedAt: new Date().toISOString() });
+    return { ok: true, deletedArtifacts };
   });
   ipcMain.handle('ph:getLogs', async () => {
     try {

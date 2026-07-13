@@ -50,6 +50,13 @@ export class TaskStore {
     return { ...updated };
   }
 
+  delete(taskId: string): Task | undefined {
+    const task = this.tasks.get(taskId);
+    if (!task) return undefined;
+    this.tasks.delete(taskId);
+    return { ...task };
+  }
+
   list(): Task[] {
     return Array.from(this.tasks.values()).map((t) => ({ ...t }));
   }

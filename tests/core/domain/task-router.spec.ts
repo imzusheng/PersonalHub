@@ -108,6 +108,12 @@ describe('TaskStore', () => {
     store.create({ capability: 'image.describe', pluginId: 'vision.mock', input: {} });
     expect(store.list()).toHaveLength(2);
   });
+
+  it('can delete a task', () => {
+    const task = store.create({ capability: 'image.describe', pluginId: 'vision.mock', input: {} });
+    expect(store.delete(task.taskId)?.taskId).toBe(task.taskId);
+    expect(store.findById(task.taskId)).toBeUndefined();
+  });
 });
 
 describe('validateInput', () => {
@@ -119,6 +125,12 @@ describe('validateInput', () => {
   it('fails when required field missing', () => {
     const schema: SimpleJsonSchema = { type: 'object', required: ['imageUrl'], properties: { imageUrl: { type: 'string' } } };
     expect(validateInput(schema, {}).valid).toBe(false);
+  });
+
+  it('fails when a required string is empty or whitespace', () => {
+    const schema: SimpleJsonSchema = { type: 'object', required: ['text'], properties: { text: { type: 'string' } } };
+    expect(validateInput(schema, { text: '' }).errors).toContain('Required field "text" cannot be empty');
+    expect(validateInput(schema, { text: '   ' }).valid).toBe(false);
   });
 
   it('fails when field type mismatch', () => {

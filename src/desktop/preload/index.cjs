@@ -11,6 +11,8 @@ const api = {
   getTasks: () => ipcRenderer.invoke('ph:getTasks'),
   getCapabilities: () => ipcRenderer.invoke('ph:getCapabilities'),
   createTask: (capability, input, execute = true) => ipcRenderer.invoke('ph:createTask', capability, input, execute),
+  revealArtifact: (taskId, localPath) => ipcRenderer.invoke('ph:revealArtifact', taskId, localPath),
+  deleteTask: (taskId, deleteArtifacts = false) => ipcRenderer.invoke('ph:deleteTask', taskId, deleteArtifacts),
   getLogs: () => ipcRenderer.invoke('ph:getLogs'),
   getConfig: () => ipcRenderer.invoke('ph:getConfig'),
   saveConfig: (patch) => ipcRenderer.invoke('ph:saveConfig', patch),

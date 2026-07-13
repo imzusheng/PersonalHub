@@ -20,6 +20,7 @@ export interface TaskUpdate {
 
 export interface JsonSchemaProperty {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  minLength?: number;
 }
 
 export interface SimpleJsonSchema {
@@ -49,6 +50,8 @@ export function validateInput(schema: SimpleJsonSchema | undefined, input: unkno
     for (const field of schema.required) {
       if (!(field in record) || record[field] === undefined || record[field] === null) {
         errors.push(`Missing required field: ${field}`);
+      } else if (typeof record[field] === 'string' && !record[field].trim()) {
+        errors.push(`Required field "${field}" cannot be empty`);
       }
     }
   }
@@ -60,6 +63,8 @@ export function validateInput(schema: SimpleJsonSchema | undefined, input: unkno
         const actualType = Array.isArray(val) ? 'array' : typeof val;
         if (actualType !== prop.type) {
           errors.push(`Field "${key}" must be of type ${prop.type}, got ${actualType}`);
+        } else if (prop.type === 'string' && typeof val === 'string' && prop.minLength !== undefined && val.length < prop.minLength) {
+          errors.push(`Field "${key}" must contain at least ${prop.minLength} characters`);
         }
       }
     }
