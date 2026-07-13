@@ -50,6 +50,8 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      MAC_CERT_AVAILABLE: ${{ secrets.MAC_CSC_LINK != '' }}
 
     steps:
       - uses: actions/checkout@v7.0.0
@@ -70,13 +72,13 @@ jobs:
       - run: pnpm build
 
       - name: Build unsigned package
-        if: matrix.target == 'win' || secrets.MAC_CSC_LINK == ''
+        if: matrix.target == 'win' || env.MAC_CERT_AVAILABLE != 'true'
         run: pnpm exec electron-builder --${{ matrix.target }} --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Build signed macOS package
-        if: matrix.target == 'mac' && secrets.MAC_CSC_LINK != ''
+        if: matrix.target == 'mac' && env.MAC_CERT_AVAILABLE == 'true'
         run: pnpm exec electron-builder --mac --x64 --publish never
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
