@@ -25,11 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies (macOS signing)
-        if: runner.os == 'macOS'
-        run: |
-          python3 -m pip install --user setuptools
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
