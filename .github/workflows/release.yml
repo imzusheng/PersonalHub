@@ -69,10 +69,18 @@ jobs:
 
       - run: pnpm build
 
-      - run: pnpm exec electron-builder --${{ matrix.target }} --x64 --publish never
+      - name: Build unsigned package
+        if: matrix.target == 'win' || secrets.MAC_CSC_LINK == ''
+        run: pnpm exec electron-builder --${{ matrix.target }} --x64 --publish never
         env:
-          CSC_LINK: ${{ matrix.target == 'mac' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.target == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Build signed macOS package
+        if: matrix.target == 'mac' && secrets.MAC_CSC_LINK != ''
+        run: pnpm exec electron-builder --mac --x64 --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
 
       - name: Upload installer to draft release
         uses: softprops/action-gh-release@v3.0.1
