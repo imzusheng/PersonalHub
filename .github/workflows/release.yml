@@ -3,28 +3,73 @@ name: Publish PersonalHub Release
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - "v*"
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    runs-on: windows-latest
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create draft release
+        uses: softprops/action-gh-release@v3.0.1
+        with:
+          draft: true
+          generate_release_notes: true
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: mac
+            asset: release/PersonalHub-*.dmg
+          - os: windows-2022
+            target: win
+            asset: release/PersonalHub-Setup-*.exe
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install dependencies
-        run: npm install
-      - name: Build Windows installer
-        run: npx tsc -p tsconfig.build.json && node scripts/copy-preload.mjs && npx vite build && npx electron-builder --win --x64 --publish never
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: node scripts/generate-icons.mjs
+
+      - run: pnpm build
+
+      - run: pnpm exec electron-builder --${{ matrix.target }} --x64 --publish never
+
+      - name: Upload installer to draft release
+        uses: softprops/action-gh-release@v3.0.1
         with:
-          files: release/PersonalHub-Setup-*-x64.exe
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          draft: true
+          files: ${{ matrix.asset }}
+          fail_on_unmatched_files: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish completed release
+        uses: softprops/action-gh-release@v3.0.1
