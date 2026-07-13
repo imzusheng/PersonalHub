@@ -2,12 +2,13 @@ interface TickResult { heartbeatSent:boolean; capabilitiesPublished:boolean; tas
 type RemoteStatus='unconfigured'|'connecting'|'online'|'degraded'|'offline';
 interface StatusResponse { mode:string; connector:string; agentStatus:string; apiHost:string; apiPort:number; lastHeartbeatAt:string|null; lastHeartbeatSuccessAt:string|null; lastHeartbeatErrorAt:string|null; consecutiveHeartbeatFailures:number; lastRemoteError:string|null; remoteStatus:RemoteStatus; configurationIssue:string|null; lastTick:TickResult|null; pluginCount:number; capabilityCount:number; startedAt:string; hostId:string|null; memoryPercent:number; taskCount:number; platform:string }
 interface PluginSummary { id:string; name:string; version:string; runtime:string; description?:string; capabilities:Array<{name:string;description?:string}>; enabled:boolean; status:'registered'|'disabled'|'unsupported'|'error'; reason?:string }
-interface TaskSummary { taskId:string; capability:string; status:string; output:unknown; error:{message:string}|null; updatedAt:string }
+interface TaskSummary { taskId:string; capability:string; input:unknown; status:string; output:unknown; error:{message:string}|null; updatedAt:string }
+interface CapabilitySummary { name:string; pluginId:string; description?:string; inputSchema?:{required?:string[];properties?:Record<string,{type:string}>} }
 interface ConfigResponse { hostId:string; name:string; serverUrl:string|null; apiKey:string|null; agentIntervalMs:number; startOnLogin:boolean; apiKeyConfigured:boolean }
 interface UpdatePlan { deploymentId:string; artifactUrl:string; artifactName:string; artifactSha256:string; artifactSizeBytes:number }
 interface PersonalHubApi {
   getStatus():Promise<StatusResponse|null>; runAgentTick():Promise<TickResult>; startAgent():Promise<{ok?:boolean;error?:string}>; stopAgent():Promise<{ok?:boolean;error?:string}>;
-  getPlugins():Promise<PluginSummary[]>; setPluginEnabled(pluginId:string,enabled:boolean):Promise<{ok:boolean;restartRequired:boolean}>; deletePlugin(pluginId:string):Promise<{ok:boolean;restartRequired:boolean}>; getTasks():Promise<TaskSummary[]>; getLogs():Promise<string>; getConfig():Promise<ConfigResponse|null>;
+  getPlugins():Promise<PluginSummary[]>; setPluginEnabled(pluginId:string,enabled:boolean):Promise<{ok:boolean;restartRequired:boolean}>; deletePlugin(pluginId:string):Promise<{ok:boolean;restartRequired:boolean}>; getTasks():Promise<TaskSummary[]>; getCapabilities():Promise<CapabilitySummary[]>; createTask(capability:string,input:unknown,execute?:boolean):Promise<TaskSummary>; getLogs():Promise<string>; getConfig():Promise<ConfigResponse|null>;
   saveConfig(patch:Partial<Omit<ConfigResponse,'hostId'|'apiKeyConfigured'>>):Promise<ConfigResponse>; checkUpdate():Promise<UpdatePlan|null>; downloadUpdate(plan:UpdatePlan):Promise<string>; restartApp():Promise<void>; log(msg:string):Promise<void>;
 }
 declare global { interface Window { personalhub?:PersonalHubApi } }
@@ -32,6 +33,7 @@ function esc(value:unknown):string{return String(value??'').replace(/[&<>'"]/g,(
 function fmtTime(iso:string|null):string{if(!iso)return '尚未同步';const d=new Date(iso);return new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d)}
 function elapsed(iso:string):string{const ms=Math.max(0,Date.now()-new Date(iso).getTime());const minutes=Math.floor(ms/60000);if(minutes<1)return '刚刚启动';if(minutes<60)return `${minutes} 分钟`;return `${Math.floor(minutes/60)} 小时 ${minutes%60} 分钟`}
 function debug(message:string):void{window.personalhub?.log(message).catch(()=>undefined)}
+function exampleInput(schema:CapabilitySummary['inputSchema']):Record<string,unknown>{const result:Record<string,unknown>={};for(const key of schema?.required??[]){const type=schema?.properties?.[key]?.type;result[key]=type==='number'?0:type==='boolean'?false:type==='array'?[]:type==='object'?{}:''}return result}
 function badge(status:string):string{const tone=status==='succeeded'||status==='running'?'ok':status==='failed'?'fail':'warn';return `<span class="badge ${tone}">${esc(status)}</span>`}
 function card(content:string,extra=''):string{return `<article class="card glass ${extra}"><div class="card-body">${content}</div></article>`}
 function pageHead(kicker:string,title:string,subtitle:string,meta=''):string{return `<div class="page-head"><div><div class="eyebrow">${esc(kicker)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${meta}</div>`}
@@ -62,9 +64,12 @@ async function renderTab(status:StatusResponse):Promise<string>{
     return pageHead('Capabilities','插件','本机真实可调用的模型与工具',hostMeta)+body;
   }
   if(activeTab==='tasks'){
-    const tasks=await window.personalhub!.getTasks();
-    const body=tasks.length?`<div class="task-list">${tasks.map((task)=>card(`<div class="task-head"><div><strong>${esc(task.capability)}</strong><div class="mono">${esc(task.taskId)}</div></div>${badge(task.status)}</div><div class="mono" style="margin-top:12px">更新于 ${esc(fmtTime(task.updatedAt))}</div>${task.error?`<p class="error">${esc(task.error.message)}</p>`:task.output!==null?`<pre>${esc(JSON.stringify(task.output,null,2))}</pre>`:''}`)).join('')}</div>`:`<div class="empty"><div><strong>还没有本地任务</strong><span>从 adminOS 创建任务后会在这里留下执行记录</span></div></div>`;
-    return pageHead('Execution','任务','本机领取与执行的任务历史',`<span class="chip">${tasks.length} 条记录</span>`)+body;
+    const [tasks,capabilities]=await Promise.all([window.personalhub!.getTasks(),window.personalhub!.getCapabilities()]);
+    const options=capabilities.map((cap)=>`<option value="${esc(cap.name)}" data-example="${esc(JSON.stringify(exampleInput(cap.inputSchema)))}">${esc(cap.name)} · ${esc(cap.pluginId)}</option>`).join('');
+    const initialInput=JSON.stringify(exampleInput(capabilities[0]?.inputSchema),null,2);
+    const composer=card(`<div class="section-title"><h3>发起本地任务</h3><span>创建 → 路由 → 执行 → 记录</span></div>${capabilities.length?`<form id="taskForm" class="task-form"><label>能力<select id="taskCapability" name="capability">${options}</select></label><label>输入 JSON<textarea id="taskInput" name="input" spellcheck="false">${esc(initialInput)}</textarea></label><div class="toolbar"><button class="tool-btn primary" type="submit">发起并执行</button></div></form>`:`<div class="notice">当前没有已注册且启用的能力，无法发起任务。</div>`}`);
+    const history=tasks.length?`<div class="task-list">${tasks.map((task)=>card(`<div class="task-head"><div><strong>${esc(task.capability)}</strong><div class="mono">${esc(task.taskId)}</div></div>${badge(task.status)}</div><div class="mono" style="margin-top:12px">更新于 ${esc(fmtTime(task.updatedAt))}</div>${task.error?`<p class="error">${esc(task.error.message)}</p>`:task.output!==null?`<pre>${esc(JSON.stringify(task.output,null,2))}</pre>`:''}`)).join('')}</div>`:`<div class="empty"><div><strong>还没有任务记录</strong><span>可在上方发起本地任务，或等待 AdminOS 下发任务</span></div></div>`;
+    return pageHead('Execution','任务','发起本地调用，并追踪本机领取与执行的完整历史',`<span class="chip">${tasks.length} 条记录</span>`)+`<div class="grid">${composer}${history}</div>`;
   }
   if(activeTab==='logs'){
     const logs=await window.personalhub!.getLogs();
@@ -106,6 +111,8 @@ function bindEvents():void{
   document.getElementById('topRefresh')?.addEventListener('click',()=>void render());document.getElementById('refreshLogs')?.addEventListener('click',()=>void render());
   const toggle=document.getElementById('toggleScheduling') as HTMLButtonElement|undefined;toggle?.addEventListener('click',()=>void runAction(toggle,async()=>{const status=await window.personalhub!.getStatus();if(status?.agentStatus==='running')await window.personalhub!.stopAgent();else await window.personalhub!.startAgent();await render()}));
   const runTick=document.getElementById('runTick') as HTMLButtonElement|undefined;runTick?.addEventListener('click',()=>void runAction(runTick,async()=>{const result=await window.personalhub!.runAgentTick();toast(`同步完成 · ${result.tasksProcessed} 个任务`);await render()}));
+  document.getElementById('taskForm')?.addEventListener('submit',(event)=>{event.preventDefault();const form=event.currentTarget as HTMLFormElement;void runAction(form.querySelector('button[type="submit"]') as HTMLButtonElement,async()=>{const values=new FormData(form);const capability=String(values.get('capability')??'');let input:unknown;try{input=JSON.parse(String(values.get('input')??'{}'))}catch{throw new Error('输入必须是有效的 JSON')}const task=await window.personalhub!.createTask(capability,input,true);toast(task.status==='succeeded'?'任务执行成功':`任务状态：${task.status}`);await render()})});
+  document.getElementById('taskCapability')?.addEventListener('change',(event)=>{const select=event.currentTarget as HTMLSelectElement;const input=document.getElementById('taskInput') as HTMLTextAreaElement|null;const example=select.selectedOptions[0]?.dataset.example;if(input&&example)input.value=JSON.stringify(JSON.parse(example),null,2)});
   const update=document.getElementById('checkUpdate') as HTMLButtonElement|undefined;update?.addEventListener('click',()=>void runAction(update,async()=>{const plan=await window.personalhub!.checkUpdate();if(!plan){toast('当前已是最新版本');return}toast(`正在下载 ${plan.artifactName}`);const path=await window.personalhub!.downloadUpdate(plan);toast(`更新包已校验：${path}`)}));
   document.getElementById('toggleApiKey')?.addEventListener('click',()=>{const input=document.getElementById('apiKeyInput') as HTMLInputElement|null;if(!input)return;input.type=input.type==='password'?'text':'password'});
   document.getElementById('restartApp')?.addEventListener('click',()=>void window.personalhub!.restartApp());

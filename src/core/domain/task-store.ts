@@ -25,6 +25,12 @@ export class TaskStore {
     return task;
   }
 
+  restore(task: Task): Task {
+    const restored = { ...task };
+    this.tasks.set(restored.taskId, restored);
+    return { ...restored };
+  }
+
   findById(taskId: string): Task | undefined {
     const task = this.tasks.get(taskId);
     if (!task) return undefined;

@@ -9,6 +9,8 @@ const api = {
   setPluginEnabled: (pluginId, enabled) => ipcRenderer.invoke('ph:setPluginEnabled', pluginId, enabled),
   deletePlugin: (pluginId) => ipcRenderer.invoke('ph:deletePlugin', pluginId),
   getTasks: () => ipcRenderer.invoke('ph:getTasks'),
+  getCapabilities: () => ipcRenderer.invoke('ph:getCapabilities'),
+  createTask: (capability, input, execute = true) => ipcRenderer.invoke('ph:createTask', capability, input, execute),
   getLogs: () => ipcRenderer.invoke('ph:getLogs'),
   getConfig: () => ipcRenderer.invoke('ph:getConfig'),
   saveConfig: (patch) => ipcRenderer.invoke('ph:saveConfig', patch),

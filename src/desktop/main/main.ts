@@ -31,6 +31,12 @@ let agentIntervalMs = 30_000;
 let userConfig: UserConfig | null = null;
 let updateService: UpdateService | null = null;
 let pluginsPath = '';
+let shutdownStarted = false;
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
 
 interface PluginCatalogItem {
   id: string; name: string; version: string; runtime: string; description?: string;
@@ -134,9 +140,7 @@ function loadPersistedTasks(userData: string): void {
         const parsed: unknown = JSON.parse(line);
         if (typeof parsed !== 'object' || parsed === null) continue;
         const task = parsed as Record<string, unknown>;
-        if (typeof task.taskId === 'string') {
-          if (!latest.has(task.taskId)) latest.set(task.taskId, task);
-        }
+        if (typeof task.taskId === 'string') latest.set(task.taskId, task);
       } catch { /* skip invalid line */ }
     }
     let restored = 0;
@@ -153,18 +157,17 @@ function loadPersistedTasks(userData: string): void {
             }
             continue;
           }
-          hub.taskStore.create({
-            capability: task.capability as string,
-            pluginId: (task.pluginId as string) || '',
+          hub.taskStore.restore({
+            taskId: task.taskId,
+            capability: task.capability,
+            pluginId: typeof task.pluginId === 'string' ? task.pluginId : '',
             input: task.input,
+            status: task.status === 'running' || task.status === 'succeeded' || task.status === 'failed' ? task.status : 'queued',
+            output: task.output ?? null,
+            error: task.error && typeof task.error === 'object' ? task.error as { message: string; details?: unknown } : null,
+            createdAt: typeof task.createdAt === 'string' ? task.createdAt : new Date().toISOString(),
+            updatedAt: typeof task.updatedAt === 'string' ? task.updatedAt : new Date().toISOString(),
           });
-          if (task.status && task.status !== 'queued') {
-            hub.taskStore.update(task.taskId, {
-              status: task.status as 'queued' | 'running' | 'succeeded' | 'failed',
-              output: task.output as unknown,
-              error: task.error as { message: string; details?: unknown } | null,
-            });
-          }
           restored += 1;
     }
     if (restored > 0) fileLog(`persisted tasks: restored ${restored}`);
@@ -423,7 +426,8 @@ function setupIpc(): void {
         status: registered.enabled ? 'registered' : 'disabled',
       });
     }
-    return [...plugins.values()];
+    const statusOrder: Record<PluginCatalogItem['status'], number> = { registered: 0, disabled: 1, unsupported: 2, error: 3 };
+    return [...plugins.values()].sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name));
   });
   ipcMain.handle('ph:setPluginEnabled', async (_event, pluginId: string, enabled: boolean) => {
     const plugin = pluginCatalog.get(pluginId);
@@ -456,6 +460,15 @@ function setupIpc(): void {
     return { ok: true, restartRequired: true };
   });
   ipcMain.handle('ph:getTasks', async () => hub?.taskStore.list() ?? []);
+  ipcMain.handle('ph:getCapabilities', async () => hub?.capabilityRegistry.list() ?? []);
+  ipcMain.handle('ph:createTask', async (_event, capability: string, input: unknown, execute: boolean) => {
+    if (!hub) throw new Error('Hub not initialized');
+    const created = await hub.taskRouter.createTask({ capability, input });
+    if (!created.success) throw new Error(created.error.message);
+    if (!execute) return created.task;
+    const executed = await hub.taskRouter.executeTask(created.task.taskId);
+    return executed.task;
+  });
   ipcMain.handle('ph:getLogs', async () => {
     try {
       const contents = fs.readFileSync(logFile, 'utf-8');
@@ -497,7 +510,7 @@ function setupIpc(): void {
   });
 }
 
-app.whenReady().then(async () => {
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   const logsPath = app.getPath('logs');
   fs.mkdirSync(logsPath, { recursive: true });
   logFile = path.join(logsPath, 'personalhub-debug.log');
@@ -508,6 +521,13 @@ app.whenReady().then(async () => {
   createTray();
   updateTrayStatus();
   createWindow();
+});
+
+app.on('second-instance', () => {
+  if (!mainWindow) createWindow();
+  if (mainWindow?.isMinimized()) mainWindow.restore();
+  mainWindow?.show();
+  mainWindow?.focus();
 });
 
 app.on('window-all-closed', () => {
@@ -522,10 +542,19 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', async () => {
+app.on('before-quit', (event) => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  event.preventDefault();
   fileLog('before-quit');
-  if (hub) {
-    await hub.agent.stop();
-    await hub.stop();
-  }
+  void (async () => {
+    try {
+      if (hub) {
+        await hub.agent.stop();
+        await hub.stop();
+      }
+    } finally {
+      app.exit(0);
+    }
+  })();
 });

@@ -11,3 +11,5 @@ coverage/
 .opencode/
 app.asar
 build/icon.iconset/
+
+.idea
