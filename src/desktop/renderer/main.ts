@@ -8,11 +8,12 @@ interface TaskSummary { taskId:string; capability:string; pluginId:string; input
 interface CapabilitySummary { name:string; pluginId:string; description?:string; inputSchema?:{required?:string[];properties?:Record<string,{type:string}>} }
 interface ConfigResponse { hostId:string; name:string; serverUrl:string|null; apiKey:string|null; agentIntervalMs:number; startOnLogin:boolean; logRetentionDays:number; apiKeyConfigured:boolean }
 interface StorageInfo { logsPath:string; cachePath:string; pluginsPath:string; logsBytes:number; cacheBytes:number; pluginsBytes:number }
-interface UpdatePlan { deploymentId:string; artifactUrl:string; artifactName:string; artifactSha256:string; artifactSizeBytes:number }
+type UpdatePhase='disabled'|'idle'|'checking'|'up-to-date'|'available'|'downloading'|'downloaded'|'installing'|'error';
+interface UpdateState { phase:UpdatePhase; currentVersion:string; availableVersion:string|null; releaseName:string|null; releaseNotes:string|null; releaseDate:string|null; progressPercent:number|null; bytesPerSecond:number|null; transferredBytes:number|null; totalBytes:number|null; checkedAt:string|null; error:string|null }
 interface PersonalHubApi {
   getStatus():Promise<StatusResponse|null>; getMetrics():Promise<MetricSnapshot>; getMetricHistory(range:'minute'|'hour'):Promise<MetricSnapshot[]>; runAgentTick():Promise<TickResult>; startAgent():Promise<{ok?:boolean;error?:string}>; stopAgent():Promise<{ok?:boolean;error?:string}>;
   getPlugins():Promise<PluginSummary[]>; importPlugin():Promise<{id:string;name:string}|null>; copyText(value:string):Promise<{ok:boolean}>; setPluginEnabled(pluginId:string,enabled:boolean):Promise<{ok:boolean;restartRequired:boolean}>; deletePlugin(pluginId:string):Promise<{ok:boolean;restartRequired:boolean}>; getTasks():Promise<TaskSummary[]>; getCapabilities():Promise<CapabilitySummary[]>; createTask(capability:string,input:unknown,execute?:boolean):Promise<TaskSummary>; revealArtifact(taskId:string,localPath:string):Promise<{ok:boolean}>; deleteTask(taskId:string,deleteArtifacts?:boolean):Promise<{ok:boolean;deletedArtifacts:number}>; getLogs():Promise<string>; getConfig():Promise<ConfigResponse|null>; getStorageInfo():Promise<StorageInfo>; openStoragePath(kind:'logs'|'cache'|'plugins'):Promise<{ok:boolean}>;
-  saveConfig(patch:Partial<Omit<ConfigResponse,'hostId'|'apiKeyConfigured'>>):Promise<ConfigResponse>; checkUpdate():Promise<UpdatePlan|null>; downloadUpdate(plan:UpdatePlan):Promise<string>; restartApp():Promise<void>; log(msg:string):Promise<void>;
+  saveConfig(patch:Partial<Omit<ConfigResponse,'hostId'|'apiKeyConfigured'>>):Promise<ConfigResponse>; getUpdateState():Promise<UpdateState|null>; checkUpdate():Promise<UpdateState|null>; downloadUpdate():Promise<UpdateState|null>; installUpdate():Promise<UpdateState|null>; onUpdateState(callback:(state:UpdateState)=>void):()=>void; restartApp():Promise<void>; log(msg:string):Promise<void>;
 }
 declare global { interface Window { personalhub?:PersonalHubApi } }
 
@@ -20,6 +21,8 @@ const app=document.getElementById('app')!;
 type Tab='overview'|'plugins'|'tasks'|'logs'|'lab'|'settings';
 let activeTab:Tab='overview';
 let metricsTimer:number|undefined;
+let updateState:UpdateState|null=null;
+let removeUpdateStateListener:(()=>void)|undefined;
 let metricRange:'minute'|'hour'='minute';
 const metricHistory:{cpu:number[];memory:number[];gpu:number[];net:number[]}={cpu:[],memory:[],gpu:[],net:[]};
 interface Material { preset:string; alpha:number; blur:number; radius:number; panel:string; ambient:string; accent:string; wallTop:string; wallMid:string; wallBottom:string }
@@ -52,6 +55,35 @@ function startMetrics(initial:MetricSnapshot):void{if(metricsTimer)window.clearI
 function badge(status:string):string{const tone=status==='succeeded'||status==='running'?'ok':status==='failed'?'fail':'warn';return `<span class="badge ${tone}">${esc(status)}</span>`}
 function card(content:string,extra=''):string{return `<article class="card glass ${extra}"><div class="card-body">${content}</div></article>`}
 function pageHead(kicker:string,title:string,subtitle:string,meta=''):string{return `<div class="page-head"><div><div class="eyebrow">${esc(kicker)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${meta}</div>`}
+function updateMeta(state:UpdateState|null):{label:string;tone:string;message:string}{
+  const phase=state?.phase??'idle';
+  const meta:Record<UpdatePhase,{label:string;tone:string;message:string}>={
+    disabled:{label:'开发模式',tone:'warn',message:'自动更新仅在正式安装包中启用。'},
+    idle:{label:'等待检查',tone:'warn',message:'PersonalHub 会在启动后自动检查，并每 6 小时检查一次。'},
+    checking:{label:'正在检查',tone:'warn',message:'正在从 GitHub Release 获取最新版本。'},
+    'up-to-date':{label:'已是最新',tone:'ok',message:'当前安装的版本已经是最新版。'},
+    available:{label:'发现新版本',tone:'ok',message:'新版本已找到，准备开始下载。'},
+    downloading:{label:'正在下载',tone:'ok',message:'更新在后台下载，你可以继续使用 PersonalHub。'},
+    downloaded:{label:'可以安装',tone:'ok',message:'更新已下载完成，重启后会自动安装。'},
+    installing:{label:'正在重启',tone:'ok',message:'PersonalHub 正在退出并安装更新。'},
+    error:{label:'更新失败',tone:'fail',message:state?.error??'检查或下载更新时发生错误。'},
+  };
+  return meta[phase];
+}
+function updateCardContent(state:UpdateState|null):string{
+  const current=state?.currentVersion??'--';const next=state?.availableVersion;const meta=updateMeta(state);const phase=state?.phase??'idle';
+  const progress=phase==='downloading'?`<div class="update-progress"><div class="update-progress-head"><span>${(state?.progressPercent??0).toFixed(1)}%</span><span>${fmtBytes(state?.transferredBytes??null)} / ${fmtBytes(state?.totalBytes??null)} · ${fmtBytes(state?.bytesPerSecond??null)}/s</span></div><div class="update-track"><i style="width:${Math.max(0,Math.min(100,state?.progressPercent??0))}%"></i></div></div>`:'';
+  const notes=state?.releaseNotes?`<details class="update-notes"><summary>查看版本说明</summary><pre>${esc(state.releaseNotes)}</pre></details>`:'';
+  let action='';
+  if(phase==='disabled')action='';
+  else if(phase==='checking'||phase==='downloading'||phase==='installing')action=`<button class="tool-btn" disabled>${esc(meta.label)}</button>`;
+  else if(phase==='available'||(phase==='error'&&Boolean(next)))action='<button class="tool-btn primary" id="downloadUpdate">重新下载</button>';
+  else if(phase==='downloaded')action='<button class="tool-btn primary" id="installUpdate">重启并安装</button>';
+  else action='<button class="tool-btn" id="checkUpdate">立即检查</button>';
+  return `<div class="section-title"><h3>应用更新</h3><span class="badge ${meta.tone}">${esc(meta.label)}</span></div><div class="update-version"><div><span>当前版本</span><strong>v${esc(current)}</strong></div><b>→</b><div><span>${next?'可用版本':'更新通道'}</span><strong>${next?`v${esc(next)}`:'Stable'}</strong></div></div><p class="update-message">${esc(meta.message)}</p>${progress}${notes}<div class="update-foot"><span>${state?.checkedAt?`上次检查 ${esc(fmtTime(state.checkedAt))}`:'尚未检查'}</span><div class="toolbar">${action}</div></div>`;
+}
+function updateCardMarkup(state:UpdateState|null):string{return card(updateCardContent(state),'update-card')}
+function refreshUpdateCard():void{const current=document.querySelector('.update-card');if(!current)return;const template=document.createElement('template');template.innerHTML=updateCardMarkup(updateState);const next=template.content.firstElementChild;if(next)current.replaceWith(next);bindUpdateEvents()}
 function nav():string{return ([['overview','概览'],['plugins','插件'],['tasks','任务'],['logs','日志'],['lab','外观'],['settings','设置']] as Array<[Tab,string]>).map(([tab,label])=>`<button class="nav-button ${activeTab===tab?'active':''}" data-tab="${tab}">${label}</button>`).join('')}
 function applyMaterial(next:Material,persist=true):void{material={...next};const root=document.documentElement;root.style.setProperty('--glass-alpha',String(material.alpha/100));root.style.setProperty('--glass-blur',`${material.blur}px`);root.style.setProperty('--radius',`${material.radius}px`);root.style.setProperty('--panel-rgb',material.panel);root.style.setProperty('--ambient-rgb',material.ambient);root.style.setProperty('--accent',material.accent);root.style.setProperty('--wall-top',material.wallTop);root.style.setProperty('--wall-mid',material.wallMid);root.style.setProperty('--wall-bottom',material.wallBottom);if(persist)localStorage.setItem(MATERIAL_STORAGE_KEY,JSON.stringify(material));const alphaOut=document.getElementById('alphaValue');const blurOut=document.getElementById('blurValue');const radiusOut=document.getElementById('radiusValue');if(alphaOut)alphaOut.textContent=`${material.alpha}%`;if(blurOut)blurOut.textContent=`${material.blur}px`;if(radiusOut)radiusOut.textContent=`${material.radius}px`}
 applyMaterial(material,false);
@@ -111,6 +143,7 @@ async function renderTab(status:StatusResponse):Promise<string>{
       ${card(`<div class="section-title"><h3>材质参数</h3><span>实时</span></div><div class="control-list"><label class="control"><div class="control-head"><span>面板透明度</span><output id="alphaValue">${material.alpha}%</output></div><input id="alphaControl" type="range" min="18" max="82" value="${material.alpha}"></label><label class="control"><div class="control-head"><span>背景模糊</span><output id="blurValue">${material.blur}px</output></div><input id="blurControl" type="range" min="0" max="48" value="${material.blur}"></label><label class="control"><div class="control-head"><span>卡片圆角</span><output id="radiusValue">${material.radius}px</output></div><input id="radiusControl" type="range" min="10" max="30" value="${material.radius}"></label></div>`)}</div>
     </div>`;
   }
+  updateState=updateState??await window.personalhub!.getUpdateState();
   const running=status.agentStatus==='running';const tick=status.lastTick;
   return pageHead('Overview','运行概览','本机 AI 服务、远程调度与执行状态',hostMeta)+`
     ${card(`<div class="hero"><div class="orb">⌘</div><div><h2>${running?'准备接收远程任务':'远程调度已暂停'}</h2><p>${running?'PersonalHub 正在主动同步能力并领取任务。':'本机插件与 Ollama 不受影响，adminOS 暂时无法调度。'}</p><div class="chips"><span class="chip">${esc(status.connector)}</span><span class="chip">本地 API ${esc(status.apiPort)}</span></div></div></div><div class="stat-band"><div class="stat"><span>插件</span><strong>${status.pluginCount}</strong><small>${status.capabilityCount} 个能力</small></div><div class="stat"><span>能力</span><strong>${status.capabilityCount}</strong><small>可调度</small></div><div class="stat"><span>任务</span><strong>${status.taskCount}</strong><small>${tick?`${tick.succeeded} 成功`:'等待循环'}</small></div><div class="stat"><span>内存</span><strong>${status.memoryPercent}%</strong><small>仅指标</small></div></div>`,'overview-card')}
@@ -119,12 +152,18 @@ async function renderTab(status:StatusResponse):Promise<string>{
       ${[['cpu','CPU','处理器负载'],['memory','RAM','内存占用'],['gpu','GPU','图形处理器'],['net','NET','上下行合计']].map(([key,label,meta])=>card(`<div class="metric-head"><span>${label}</span><strong data-metric-value="${key}">--</strong></div><svg class="metric-chart" viewBox="0 0 100 40" preserveAspectRatio="none" aria-label="${label} 趋势"><path class="metric-grid-line" d="M 0 36 L 100 36 M 0 20 L 100 20 M 0 4 L 100 4"></path><path class="metric-line metric-${key}" data-metric-path="${key}" d=""></path></svg><small ${key==='gpu'?'id="gpuMeta"':''}>${meta}</small>`,'metric-card')).join('')}
     </div>
     <div class="grid overview-grid">
-      ${card(`<div class="section-title"><h3>远程调度状态</h3><span>${esc(status.remoteStatus)}</span></div><div class="summary"><div><span>最近成功心跳</span><strong>${esc(fmtTime(status.lastHeartbeatSuccessAt))}</strong></div><div><span>连续失败</span><strong>${status.consecutiveHeartbeatFailures}</strong></div><div><span>运行时长</span><strong>${esc(elapsed(status.startedAt))}</strong></div></div>${status.configurationIssue?`<p class="error">${esc(status.configurationIssue)}</p>`:''}${status.lastRemoteError?`<p class="error">${esc(status.lastRemoteError)}</p>`:''}<div class="toolbar" style="margin-top:16px"><button class="tool-btn ${running?'danger':'primary'}" id="toggleScheduling">${running?'停止远程调度':'启动远程调度'}</button><button class="tool-btn" id="runTick" ${running?'':'disabled'}>立即同步</button><button class="tool-btn" id="checkUpdate">检查更新</button></div><pre class="result" id="actionOutput"></pre>`)}
+      ${card(`<div class="section-title"><h3>远程调度状态</h3><span>${esc(status.remoteStatus)}</span></div><div class="summary"><div><span>最近成功心跳</span><strong>${esc(fmtTime(status.lastHeartbeatSuccessAt))}</strong></div><div><span>连续失败</span><strong>${status.consecutiveHeartbeatFailures}</strong></div><div><span>运行时长</span><strong>${esc(elapsed(status.startedAt))}</strong></div></div>${status.configurationIssue?`<p class="error">${esc(status.configurationIssue)}</p>`:''}${status.lastRemoteError?`<p class="error">${esc(status.lastRemoteError)}</p>`:''}<div class="toolbar" style="margin-top:16px"><button class="tool-btn ${running?'danger':'primary'}" id="toggleScheduling">${running?'停止远程调度':'启动远程调度'}</button><button class="tool-btn" id="runTick" ${running?'':'disabled'}>立即同步</button></div><pre class="result" id="actionOutput"></pre>`)}
+      ${updateCardMarkup(updateState)}
     </div>`;
 }
 
 function toast(message:string):void{document.querySelector('.toast')?.remove();const node=document.createElement('div');node.className='toast';node.textContent=message;document.body.appendChild(node);window.setTimeout(()=>node.remove(),3200)}
 async function runAction(button:HTMLButtonElement|undefined,action:()=>Promise<void>):Promise<void>{if(button)button.disabled=true;try{await action()}catch(error){toast(error instanceof Error?error.message:String(error))}finally{if(button)button.disabled=false}}
+function bindUpdateEvents():void{
+  const check=document.getElementById('checkUpdate') as HTMLButtonElement|undefined;check?.addEventListener('click',()=>void runAction(check,async()=>{updateState=await window.personalhub!.checkUpdate();refreshUpdateCard()}));
+  const download=document.getElementById('downloadUpdate') as HTMLButtonElement|undefined;download?.addEventListener('click',()=>void runAction(download,async()=>{updateState=await window.personalhub!.downloadUpdate();refreshUpdateCard()}));
+  const install=document.getElementById('installUpdate') as HTMLButtonElement|undefined;install?.addEventListener('click',()=>{if(!window.confirm('现在重启 PersonalHub 并安装更新？'))return;void runAction(install,async()=>{updateState=await window.personalhub!.installUpdate();refreshUpdateCard()})});
+}
 function bindEvents():void{
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button)=>button.addEventListener('click',()=>{activeTab=button.dataset.tab as Tab;void render()}));
   document.querySelectorAll<HTMLButtonElement>('[data-plugin-toggle]').forEach((button)=>button.addEventListener('click',()=>void runAction(button,async()=>{const id=button.dataset.pluginToggle!;const enabled=button.dataset.pluginEnabled==='true';await window.personalhub!.setPluginEnabled(id,!enabled);toast(`${enabled?'已禁用':'已启用'} ${id}，重启后生效`);await render()})));
@@ -141,7 +180,7 @@ function bindEvents():void{
   const applyTaskFilters=()=>{const query=(document.getElementById('taskSearch') as HTMLInputElement|null)?.value.trim().toLowerCase()??'';const status=(document.getElementById('taskStatusFilter') as HTMLSelectElement|null)?.value??'all';let visible=0;document.querySelectorAll<HTMLElement>('[data-task-row]').forEach((row)=>{const show=(!query||row.dataset.search?.includes(query))&&(status==='all'||row.dataset.status===status);row.hidden=!show;if(show)visible+=1});const count=document.getElementById('taskVisibleCount');if(count)count.textContent=`${visible} / ${document.querySelectorAll('[data-task-row]').length}`};document.getElementById('taskSearch')?.addEventListener('input',applyTaskFilters);document.getElementById('taskStatusFilter')?.addEventListener('change',applyTaskFilters);
   document.querySelectorAll<HTMLButtonElement>('[data-artifact-task]').forEach((button)=>button.addEventListener('click',()=>void runAction(button,async()=>{await window.personalhub!.revealArtifact(button.dataset.artifactTask!,button.dataset.artifactPath!)})));
   document.querySelectorAll<HTMLButtonElement>('[data-task-delete]').forEach((button)=>button.addEventListener('click',()=>{const taskId=button.dataset.taskDelete!;if(!window.confirm(`确认删除任务记录 ${taskId.slice(0,8)}？`))return;void runAction(button,async()=>{const checkbox=document.querySelector<HTMLInputElement>(`[data-delete-artifacts="${taskId}"]`);const result=await window.personalhub!.deleteTask(taskId,Boolean(checkbox?.checked));toast(result.deletedArtifacts?`记录与 ${result.deletedArtifacts} 个产物已删除`:'任务记录已删除');await render()})}));
-  const update=document.getElementById('checkUpdate') as HTMLButtonElement|undefined;update?.addEventListener('click',()=>void runAction(update,async()=>{const plan=await window.personalhub!.checkUpdate();if(!plan){toast('当前已是最新版本');return}toast(`正在下载 ${plan.artifactName}`);const path=await window.personalhub!.downloadUpdate(plan);toast(`更新包已校验：${path}`)}));
+  bindUpdateEvents();
   document.getElementById('toggleApiKey')?.addEventListener('click',()=>{const input=document.getElementById('apiKeyInput') as HTMLInputElement|null;if(!input)return;input.type=input.type==='password'?'text':'password'});
   document.getElementById('restartApp')?.addEventListener('click',()=>void window.personalhub!.restartApp());
   const bindRange=(id:string,callback:(value:number)=>void)=>document.getElementById(id)?.addEventListener('input',(event)=>callback(Number((event.currentTarget as HTMLInputElement).value)));
@@ -152,4 +191,6 @@ function bindEvents():void{
   document.getElementById('settingsForm')?.addEventListener('submit',(event)=>{event.preventDefault();const form=event.currentTarget as HTMLFormElement;void runAction(form.querySelector('button[type="submit"]') as HTMLButtonElement,async()=>{const values=new FormData(form);const apiKey=String(values.get('apiKey')??'').trim();await window.personalhub!.saveConfig({name:String(values.get('name')??''),serverUrl:String(values.get('serverUrl')??'')||null,...(apiKey?{apiKey}:{}),agentIntervalMs:Number(values.get('agentIntervalMs')),logRetentionDays:Number(values.get('logRetentionDays')),startOnLogin:values.get('startOnLogin')==='on'});toast('设置已保存；连接信息变更需重启生效')})});
 }
 
+function subscribeUpdateState():void{if(removeUpdateStateListener||!window.personalhub)return;removeUpdateStateListener=window.personalhub.onUpdateState((state)=>{const previous=updateState?.phase;updateState=state;refreshUpdateCard();if(state.phase==='downloaded'&&previous!=='downloaded')toast(`v${state.availableVersion??''} 已下载，随时可以重启安装`)})}
+subscribeUpdateState();
 void render();

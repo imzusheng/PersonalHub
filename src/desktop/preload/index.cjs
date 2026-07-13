@@ -22,8 +22,15 @@ const api = {
   getStorageInfo: () => ipcRenderer.invoke('ph:getStorageInfo'),
   openStoragePath: (kind) => ipcRenderer.invoke('ph:openStoragePath', kind),
   saveConfig: (patch) => ipcRenderer.invoke('ph:saveConfig', patch),
+  getUpdateState: () => ipcRenderer.invoke('ph:getUpdateState'),
   checkUpdate: () => ipcRenderer.invoke('ph:checkUpdate'),
-  downloadUpdate: (plan) => ipcRenderer.invoke('ph:downloadUpdate', plan),
+  downloadUpdate: () => ipcRenderer.invoke('ph:downloadUpdate'),
+  installUpdate: () => ipcRenderer.invoke('ph:installUpdate'),
+  onUpdateState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('ph:updateState', listener);
+    return () => ipcRenderer.removeListener('ph:updateState', listener);
+  },
   restartApp: () => ipcRenderer.invoke('ph:restartApp'),
   log: (msg) => ipcRenderer.invoke('ph:log', msg),
 };

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
+import electronUpdater from 'electron-updater';
 import { createPersonalHub, type PersonalHubRuntime } from '../../core/app.js';
 import { isRuntimeSupportedOnPlatform, parsePluginManifest } from '../../core/domain/plugin-manifest.js';
 import { MockControlPlaneConnector } from '../../core/connector/mock-control-plane-connector.js';
@@ -6,7 +7,7 @@ import { AdminOSConnector } from '../../core/connector/adminos-connector.js';
 import { LocalOnlyConnector } from '../../core/connector/local-only-connector.js';
 import type { Connector } from '../../core/connector/connector.js';
 import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config.js';
-import { UpdateService } from './update-service.js';
+import { GithubUpdateService, type UpdateState } from './github-update-service.js';
 import { ArtifactLayer } from '../../core/artifact/artifact-layer.js';
 import { collectHostMetrics } from '../../core/agent/host-metrics.js';
 import type { HostMetrics } from '../../core/connector/connector.js';
@@ -15,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { autoUpdater } = electronUpdater;
 
 let logFile = '';
 let logsPath = '';
@@ -34,7 +36,7 @@ let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let agentIntervalMs = 30_000;
 let userConfig: UserConfig | null = null;
-let updateService: UpdateService | null = null;
+let updateService: GithubUpdateService | null = null;
 let pluginsPath = '';
 let shutdownStarted = false;
 
@@ -350,9 +352,20 @@ async function bootstrap(): Promise<void> {
   loadPersistedTasks(app.getPath('userData'));
   wrapTaskStore(app.getPath('userData'));
 
-  if (connector instanceof AdminOSConnector) {
-    updateService = new UpdateService(connector, path.join(app.getPath('temp'), 'PersonalHub-updates'));
-  }
+  autoUpdater.logger = {
+    info: (message) => fileLog(`updater.info: ${String(message)}`),
+    warn: (message) => fileLog(`updater.warn: ${String(message)}`),
+    error: (message) => fileLog(`updater.error: ${String(message)}`),
+    debug: (message) => fileLog(`updater.debug: ${String(message)}`),
+  };
+  updateService = new GithubUpdateService({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    persistenceFile: path.join(app.getPath('userData'), 'update-state.json'),
+    logger: fileLog,
+    onStateChange: (state: UpdateState) => mainWindow?.webContents.send('ph:updateState', state),
+  });
 
   loadPlugins(path.join(app.getPath('userData'), 'plugins'));
   hub.agent.start(agentIntervalMs);
@@ -711,10 +724,22 @@ function setupIpc(): void {
     storageCache = null;
     return userConfig;
   });
-  ipcMain.handle('ph:checkUpdate', async () => updateService?.check() ?? null);
-  ipcMain.handle('ph:downloadUpdate', async (_event, plan) => {
-    if (!updateService) throw new Error('当前未连接 AdminOS，无法下载更新');
-    return updateService.download(plan);
+  ipcMain.handle('ph:getUpdateState', async () => updateService?.getState() ?? null);
+  ipcMain.handle('ph:checkUpdate', async () => updateService?.checkForUpdates(true) ?? null);
+  ipcMain.handle('ph:downloadUpdate', async () => updateService?.downloadUpdate() ?? null);
+  ipcMain.handle('ph:installUpdate', async () => {
+    if (!updateService || updateService.getState().phase !== 'downloaded') throw new Error('更新尚未下载完成');
+    shutdownStarted = true;
+    if (metricsTimer) clearInterval(metricsTimer);
+    try {
+      if (hub) {
+        await hub.agent.stop();
+        await hub.stop();
+      }
+    } catch (error) {
+      fileLog(`update: graceful shutdown failed - ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return updateService.installUpdate();
   });
   ipcMain.handle('ph:restartApp', async () => {
     app.relaunch();
@@ -740,6 +765,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   createTray();
   updateTrayStatus();
   createWindow();
+  updateService?.startAutomaticChecks();
 });
 
 app.on('second-instance', () => {
@@ -757,6 +783,7 @@ app.on('before-quit', (event) => {
   shutdownStarted = true;
   event.preventDefault();
   fileLog('before-quit');
+  updateService?.stopAutomaticChecks();
   if (metricsTimer) clearInterval(metricsTimer);
   void (async () => {
     try {

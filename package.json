@@ -1,7 +1,8 @@
 {
   "name": "personalhub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open-source personal computer AI Worker Runtime - turns a personal Windows PC into a pluggable, locally-callable, optionally remotely-schedulable AI capability node.",
+  "author": "imzusheng",
   "type": "module",
   "license": "MIT",
   "scripts": {
@@ -19,7 +20,7 @@
     "lint": "eslint . --ext .ts,.tsx"
   },
   "main": "dist/desktop/main/main.js",
-    "build": {
+  "build": {
     "appId": "cc.zusheng.personalhub",
     "productName": "PersonalHub",
     "directories": {
@@ -37,24 +38,42 @@
         "to": "plugins"
       }
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "imzusheng",
+        "repo": "PersonalHub",
+        "releaseType": "release"
+      }
+    ],
     "mac": {
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "artifactName": "PersonalHub-${version}-${arch}.dmg"
+      "artifactName": "PersonalHub-${version}-${arch}.${ext}"
     },
     "win": {
       "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "artifactName": "PersonalHub-Setup-${version}-${arch}.exe"
+      "artifactName": "PersonalHub-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "include": "build/installer.nsh",
@@ -68,6 +87,7 @@
     "extends": null
   },
   "dependencies": {
+    "electron-updater": "6.8.9",
     "fastify": "^5.2.0",
     "zod": "^3.24.1"
   },

@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Validate tag matches package version
+        run: node -e "const version=require('./package.json').version; const expected='v'+version; if(process.env.GITHUB_REF_NAME!==expected){console.error('Tag '+process.env.GITHUB_REF_NAME+' must match package version '+expected); process.exit(1)}"
+
       - name: Create draft release
         uses: softprops/action-gh-release@v3.0.1
         with:
@@ -31,10 +36,17 @@ jobs:
         include:
           - os: macos-15
             target: mac
-            asset: release/PersonalHub-*.dmg
+            assets: |
+              release/PersonalHub-*.dmg
+              release/PersonalHub-*.zip
+              release/latest-mac.yml
+              release/*.blockmap
           - os: windows-2022
             target: win
-            asset: release/PersonalHub-Setup-*.exe
+            assets: |
+              release/PersonalHub-Setup-*.exe
+              release/latest.yml
+              release/*.blockmap
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -58,12 +70,15 @@ jobs:
       - run: pnpm build
 
       - run: pnpm exec electron-builder --${{ matrix.target }} --x64 --publish never
+        env:
+          CSC_LINK: ${{ matrix.target == 'mac' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.target == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
 
       - name: Upload installer to draft release
         uses: softprops/action-gh-release@v3.0.1
         with:
           draft: true
-          files: ${{ matrix.asset }}
+          files: ${{ matrix.assets }}
           fail_on_unmatched_files: true
 
   publish:
