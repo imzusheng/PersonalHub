@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import type { RuntimeAdapter, ExecuteTaskParams, ExecuteTaskResult, HealthCheckResult } from './runtime-adapter.js';
 import type { RegisteredPlugin } from '../domain/plugin-registry.js';
 
@@ -80,9 +81,10 @@ export class WslDockerRuntime implements RuntimeAdapter {
         for (const [key, value] of Object.entries(input)) {
           if (key.startsWith('_')) continue; // 跳过内部字段
           if (key.endsWith('Local')) {
-            // 本地路径 → WSL 路径
+            // ArtifactLayer 已把整个 inputDir 复制到 WSL 临时目录；容器应使用该副本，
+            // 不能继续引用 Windows 的 /mnt/c 路径（容器通常未挂载 Windows 文件系统）。
             const plainKey = key.replace(/Local$/, '');
-            containerInput[plainKey] = this.toWslPath(value as string, cfg.wslDistro);
+            containerInput[plainKey] = `${wslInputDir}/${path.win32.basename(value as string)}`;
           } else {
             containerInput[key] = value;
           }
@@ -90,6 +92,11 @@ export class WslDockerRuntime implements RuntimeAdapter {
       }
       containerInput['_inputDir'] = wslInputDir;
       containerInput['_outputDir'] = wslOutputDir;
+
+      // 推理服务运行在 Docker 容器内，WSL 主机的 /tmp 默认不会自动挂载进去。
+      // 显式复制输入，确保传给 /infer 的路径在容器内真实存在。
+      this.wslExec(`docker exec "${cfg.containerName}" mkdir -p "${wslInputDir}" "${wslOutputDir}"`, cfg.wslDistro);
+      this.wslExec(`docker cp "${wslInputDir}/." "${cfg.containerName}:${wslInputDir}/"`, cfg.wslDistro);
 
       // 4. 调容器 HTTP API
       const controller = new AbortController();
@@ -120,6 +127,9 @@ export class WslDockerRuntime implements RuntimeAdapter {
         throw new Error('容器返回了无效 JSON');
       }
       const output = parsed as Record<string, unknown>;
+
+      // 将容器生成的文件复制回 WSL，后续 ArtifactLayer 才能收集并上传。
+      this.wslExec(`docker cp "${cfg.containerName}:${wslOutputDir}/." "${wslOutputDir}/"`, cfg.wslDistro);
 
       // 6. 如果容器返回了 files 清单，补充完整路径
       if (Array.isArray(output['files'])) {

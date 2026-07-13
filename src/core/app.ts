@@ -11,6 +11,7 @@ import { AgentLoop } from './agent/agent-loop.js';
 import { startApiServer } from './api/server.js';
 import type { RuntimeAdapter } from './runtime/runtime-adapter.js';
 import type { Connector } from './connector/connector.js';
+import type { ArtifactLayer } from './artifact/artifact-layer.js';
 
 export interface PersonalHubConfig {
   apiPort?: number;
@@ -21,6 +22,8 @@ export interface PersonalHubConfig {
   version?: string;
   mode?: string;
   pluginsDir?: string;
+  diagnosticLogger?: (message: string) => void;
+  artifactLayer?: ArtifactLayer;
 }
 
 export interface PersonalHubRuntime {
@@ -70,6 +73,8 @@ export async function createPersonalHub(config: PersonalHubConfig = {}): Promise
     name: config.name,
     version: config.version ?? DEFAULT_VERSION,
     mode: config.mode ?? DEFAULT_MODE,
+    diagnosticLogger: config.diagnosticLogger,
+    artifactLayer: config.artifactLayer,
   });
 
   const { app, port, host } = await startApiServer(
