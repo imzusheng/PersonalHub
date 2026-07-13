@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
 import { createPersonalHub, type PersonalHubRuntime } from '../../core/app.js';
 import { isRuntimeSupportedOnPlatform, parsePluginManifest } from '../../core/domain/plugin-manifest.js';
 import { MockControlPlaneConnector } from '../../core/connector/mock-control-plane-connector.js';
@@ -8,7 +8,7 @@ import type { Connector } from '../../core/connector/connector.js';
 import { loadUserConfig, updateUserConfig, type UserConfig } from './user-config.js';
 import { UpdateService } from './update-service.js';
 import { ArtifactLayer } from '../../core/artifact/artifact-layer.js';
-import os from 'node:os';
+import { collectHostMetrics } from '../../core/agent/host-metrics.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -40,7 +40,9 @@ if (!hasSingleInstanceLock) {
 
 interface PluginCatalogItem {
   id: string; name: string; version: string; runtime: string; description?: string;
-  capabilities: Array<{ name: string; description?: string }>;
+  schemaVersion: number;
+  capabilities: Array<{ name: string; description?: string; inputSchema?: unknown; outputSchema?: unknown }>;
+  deployment?: { type: string; [key: string]: unknown };
   enabled: boolean;
   status: 'registered' | 'disabled' | 'unsupported' | 'error';
   reason?: string;
@@ -79,9 +81,10 @@ function loadPlugins(pluginsDir: string): void {
         const result = parsePluginManifest(raw);
         if (result.success) {
           const catalogItem: PluginCatalogItem = {
-            id: result.data.id, name: result.data.name, version: result.data.version,
+            id: result.data.id, name: result.data.name, version: result.data.version, schemaVersion: result.data.schemaVersion ?? 1,
             runtime: result.data.runtime, description: result.data.description,
-            capabilities: result.data.capabilities.map(({ name, description }) => ({ name, description })),
+            capabilities: result.data.capabilities.map(({ name, description, inputSchema, outputSchema }) => ({ name, description, inputSchema, outputSchema })),
+            deployment: result.data.deployment,
             enabled: !disabled.has(result.data.id), status: 'registered', directoryPath: path.join(pluginsDir, entry.name),
           };
           pluginCatalog.set(result.data.id, catalogItem);
@@ -355,6 +358,21 @@ function createWindow(): void {
     fileLog('window closed');
     mainWindow = null;
   });
+  mainWindow.on('close', (event) => {
+    if (shutdownStarted) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    if (process.platform === 'darwin') app.dock?.hide();
+    fileLog('window hidden to tray');
+  });
+}
+
+function showMainWindow(): void {
+  if (!mainWindow) createWindow();
+  if (process.platform === 'darwin') app.dock?.show();
+  if (mainWindow?.isMinimized()) mainWindow.restore();
+  mainWindow?.show();
+  mainWindow?.focus();
 }
 
 function createTray(): void {
@@ -362,19 +380,13 @@ function createTray(): void {
   tray.setToolTip('PersonalHub');
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Open Window', click: () => mainWindow?.show() ?? createWindow() },
+    { label: 'Open Window', click: showMainWindow },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ]);
 
   tray.setContextMenu(contextMenu);
-  tray.on('click', () => {
-    if (mainWindow) {
-      mainWindow.show();
-    } else {
-      createWindow();
-    }
-  });
+  tray.on('click', showMainWindow);
 }
 
 function createTrayIcon(color: 'green' | 'yellow' | 'red' | 'gray') {
@@ -398,8 +410,7 @@ function setupIpc(): void {
     if (!hub) return null;
     const lastTick = hub.agent.getLastTick();
     const remote = hub.agent.getRemoteConnectionState();
-    const totalMem = os.totalmem();
-    const memoryPercent = totalMem > 0 ? Math.round(((totalMem - os.freemem()) / totalMem) * 100) : 0;
+    const metrics = await collectHostMetrics();
     return {
       mode: hub.connector.mode,
       connector: hub.connector.id,
@@ -416,11 +427,13 @@ function setupIpc(): void {
       capabilityCount: hub.capabilityRegistry.list().length,
       startedAt: hub.startedAt,
       hostId: userConfig?.hostId ?? null,
-      memoryPercent,
+      ...metrics,
       taskCount: hub.taskStore.list().length,
       platform: process.platform,
     };
   });
+
+  ipcMain.handle('ph:getMetrics', async () => collectHostMetrics());
 
   ipcMain.handle('ph:runAgentTick', async () => {
     if (!hub) return { error: 'Hub not initialized' };
@@ -457,15 +470,64 @@ function setupIpc(): void {
         id: registered.id,
         name: registered.name,
         version: registered.version,
+        schemaVersion: 1,
         runtime: registered.runtime,
         description: registered.description,
-        capabilities: registered.capabilities.map(({ name, description }) => ({ name, description })),
+        capabilities: registered.capabilities.map(({ name, description, inputSchema, outputSchema }) => ({ name, description, inputSchema, outputSchema })),
         enabled: registered.enabled,
         status: registered.enabled ? 'registered' : 'disabled',
       });
     }
     const statusOrder: Record<PluginCatalogItem['status'], number> = { registered: 0, disabled: 1, unsupported: 2, error: 3 };
     return [...plugins.values()].sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name));
+  });
+  ipcMain.handle('ph:importPlugin', async () => {
+    if (!hub) throw new Error('Hub not initialized');
+    const dialogOptions = {
+      title: '选择 PersonalHub 插件目录',
+      properties: ['openDirectory' as const],
+    };
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (selection.canceled || !selection.filePaths[0]) return null;
+    const sourceDir = selection.filePaths[0];
+    const manifestPath = path.join(sourceDir, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) throw new Error('所选目录缺少 manifest.json');
+    const parsed = parsePluginManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf-8')));
+    if (!parsed.success) throw new Error(`插件声明无效：${parsed.error.message}`);
+    if (!isRuntimeSupportedOnPlatform(parsed.data.runtime, process.platform)) throw new Error(`当前平台不支持 runtime ${parsed.data.runtime}`);
+    if (parsed.data.deployment) {
+      const declaredPath = parsed.data.deployment.type === 'dockerfile'
+        ? path.resolve(sourceDir, parsed.data.deployment.context, parsed.data.deployment.dockerfile)
+        : path.resolve(sourceDir, parsed.data.deployment.entrypoint);
+      const relativeDeploymentPath = path.relative(sourceDir, declaredPath);
+      if (relativeDeploymentPath.startsWith('..') || path.isAbsolute(relativeDeploymentPath)) throw new Error('部署入口超出插件目录');
+      if (!fs.existsSync(declaredPath)) throw new Error(`部署入口不存在：${relativeDeploymentPath}`);
+    }
+    const safeDirectoryName = parsed.data.id.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const targetDir = path.join(pluginsPath, safeDirectoryName);
+    if (fs.existsSync(targetDir) || pluginCatalog.has(parsed.data.id)) throw new Error(`插件 ${parsed.data.id} 已存在`);
+    fs.mkdirSync(pluginsPath, { recursive: true });
+    fs.cpSync(sourceDir, targetDir, { recursive: true, errorOnExist: true, force: false });
+    const registration = hub.pluginRegistry.register(parsed.data);
+    if (!registration.success) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      throw new Error(registration.error.message);
+    }
+    const item: PluginCatalogItem = {
+      id: parsed.data.id, name: parsed.data.name, version: parsed.data.version, schemaVersion: parsed.data.schemaVersion ?? 1,
+      runtime: parsed.data.runtime, description: parsed.data.description,
+      capabilities: parsed.data.capabilities.map(({ name, description, inputSchema, outputSchema }) => ({ name, description, inputSchema, outputSchema })),
+      deployment: parsed.data.deployment, enabled: true, status: 'registered', directoryPath: targetDir,
+    };
+    pluginCatalog.set(item.id, item);
+    fileLog(`plugin ${item.id}: imported from ${sourceDir}`);
+    return { id: item.id, name: item.name };
+  });
+  ipcMain.handle('ph:copyText', async (_event, value: string) => {
+    clipboard.writeText(value);
+    return { ok: true };
   });
   ipcMain.handle('ph:setPluginEnabled', async (_event, pluginId: string, enabled: boolean) => {
     const plugin = pluginCatalog.get(pluginId);
@@ -592,22 +654,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 });
 
 app.on('second-instance', () => {
-  if (!mainWindow) createWindow();
-  if (mainWindow?.isMinimized()) mainWindow.restore();
-  mainWindow?.show();
-  mainWindow?.focus();
+  showMainWindow();
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+app.on('window-all-closed', () => undefined);
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  showMainWindow();
 });
 
 app.on('before-quit', (event) => {

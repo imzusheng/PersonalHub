@@ -22,7 +22,13 @@ const HealthcheckSchema = z.object({
   type: z.enum(ALLOWED_HEALTHCHECK_TYPES),
 }).passthrough();
 
+const DeploymentSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('dockerfile'), dockerfile: z.string().default('Dockerfile'), context: z.string().default('.') }),
+  z.object({ type: z.literal('script'), entrypoint: z.string().min(1), interpreter: z.enum(['sh', 'bash', 'python', 'powershell']).optional() }),
+]);
+
 const PluginManifestBaseSchema = z.object({
+  schemaVersion: z.literal(1).optional(),
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().min(1),
@@ -31,6 +37,7 @@ const PluginManifestBaseSchema = z.object({
   healthcheck: HealthcheckSchema.optional(),
   description: z.string().optional(),
   runtimeConfig: z.record(z.unknown()).optional(),
+  deployment: DeploymentSchema.optional(),
 });
 
 export type PluginManifest = z.infer<typeof PluginManifestBaseSchema>;
@@ -54,6 +61,15 @@ export const PluginManifestSchema = PluginManifestBaseSchema.superRefine((manife
       return;
     }
     seenNames.add(cap.name);
+  }
+  const deploymentPaths = manifest.deployment?.type === 'dockerfile'
+    ? [manifest.deployment.context, manifest.deployment.dockerfile]
+    : manifest.deployment?.type === 'script' ? [manifest.deployment.entrypoint] : [];
+  for (const deploymentPath of deploymentPaths) {
+    const segments = deploymentPath.replace(/\\/g, '/').split('/');
+    if (!deploymentPath || deploymentPath.startsWith('/') || /^[a-zA-Z]:/.test(deploymentPath) || segments.includes('..')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Deployment path must stay inside the plugin directory: ${deploymentPath}`, path: ['deployment'] });
+    }
   }
 });
 

@@ -16,6 +16,25 @@ let lastNetSample: { at: number; rx: number; tx: number } | null = null;
 /** 上一轮 CPU 采样（用于计算实际使用率） */
 let lastCpuSample: { at: number; idle: number; total: number } | null = null;
 
+async function getMemoryPercent(): Promise<number> {
+  if (process.platform === 'darwin') {
+    try {
+      const { stdout } = await execFileAsync('vm_stat', [], { timeout: 2_000 });
+      const pageSize = Number(stdout.match(/page size of (\d+) bytes/)?.[1] ?? 4096);
+      const pages = new Map<string, number>();
+      for (const line of stdout.split('\n')) {
+        const match = line.match(/^([^:]+):\s+(\d+)/);
+        if (match) pages.set(match[1], Number(match[2]));
+      }
+      const availablePages = (pages.get('Pages free') ?? 0) + (pages.get('Pages inactive') ?? 0) + (pages.get('Pages speculative') ?? 0);
+      const availableBytes = availablePages * pageSize;
+      return Math.min(100, Math.max(0, Math.round(((os.totalmem() - availableBytes) / os.totalmem()) * 100)));
+    } catch { /* fall through to the portable approximation */ }
+  }
+  const totalMemory = os.totalmem();
+  return totalMemory > 0 ? Math.round(((totalMemory - os.freemem()) / totalMemory) * 100) : 0;
+}
+
 async function getGpuMetrics(): Promise<Partial<HostMetrics>> {
   const now = Date.now();
   if (now - gpuCheckedAt < GPU_CACHE_MS) return cachedGpu;
@@ -72,22 +91,50 @@ function getCpuPercent(): number | undefined {
   return undefined; // 第一轮无法计算差值
 }
 
-function getNetBytesPerSec(): { netRxBytesPerSec: number; netTxBytesPerSec: number } | undefined {
-  const interfaces = os.networkInterfaces();
-  let totalRx = 0;
-  let totalTx = 0;
-
-  for (const iface of Object.values(interfaces)) {
-    if (!iface) continue;
-    for (const addr of iface) {
-      // 跳过内部/回环接口的数据
-      if (addr.internal) continue;
-      // bytesRecv/bytesSent 在运行时存在，但不在 Node.js 类型定义中
-      const raw = addr as { bytesRecv?: number; bytesSent?: number };
-      totalRx += raw.bytesRecv ?? 0;
-      totalTx += raw.bytesSent ?? 0;
+async function getNetTotals(): Promise<{ rx: number; tx: number } | undefined> {
+  try {
+    if (process.platform === 'linux') {
+      const { stdout } = await execFileAsync('cat', ['/proc/net/dev'], { timeout: 2_000 });
+      let rx = 0; let tx = 0;
+      for (const line of stdout.split('\n').slice(2)) {
+        const [name, values] = line.split(':');
+        if (!values || name.trim() === 'lo') continue;
+        const fields = values.trim().split(/\s+/).map(Number);
+        rx += fields[0] || 0; tx += fields[8] || 0;
+      }
+      return { rx, tx };
     }
-  }
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileAsync('netstat', ['-ibn'], { timeout: 2_000 });
+      const totals = new Map<string, { rx: number; tx: number }>();
+      for (const line of stdout.split('\n').slice(1)) {
+        const fields = line.trim().split(/\s+/);
+        if (fields.length < 10 || fields[0] === 'lo0' || !fields[0]) continue;
+        const input = Number(fields[6]); const output = Number(fields[9]);
+        const previous = totals.get(fields[0]) ?? { rx: 0, tx: 0 };
+        totals.set(fields[0], {
+          rx: Number.isFinite(input) ? Math.max(previous.rx, input) : previous.rx,
+          tx: Number.isFinite(output) ? Math.max(previous.tx, output) : previous.tx,
+        });
+      }
+      let rx = 0; let tx = 0;
+      for (const value of totals.values()) { rx += value.rx; tx += value.tx; }
+      return { rx, tx };
+    }
+    if (process.platform === 'win32') {
+      const script = '(Get-NetAdapterStatistics | Measure-Object -Property ReceivedBytes -Sum).Sum; (Get-NetAdapterStatistics | Measure-Object -Property SentBytes -Sum).Sum';
+      const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 3_000, windowsHide: true });
+      const [rx, tx] = stdout.trim().split(/\r?\n/).map(Number);
+      if (Number.isFinite(rx) && Number.isFinite(tx)) return { rx, tx };
+    }
+  } catch { /* metric remains unavailable */ }
+  return undefined;
+}
+
+async function getNetBytesPerSec(): Promise<{ netRxBytesPerSec: number; netTxBytesPerSec: number } | undefined> {
+  const totals = await getNetTotals();
+  if (!totals) return undefined;
+  const { rx: totalRx, tx: totalTx } = totals;
 
   const now = Date.now();
   if (lastNetSample) {
@@ -114,11 +161,10 @@ function getDiskPercent(): number | undefined {
 }
 
 export async function collectHostMetrics(): Promise<HostMetrics> {
-  const totalMemory = os.totalmem();
-  const memoryPercent = totalMemory > 0 ? Math.round(((totalMemory - os.freemem()) / totalMemory) * 100) : 0;
+  const memoryPercent = await getMemoryPercent();
 
   const cpuPercent = getCpuPercent();
-  const net = getNetBytesPerSec();
+  const net = await getNetBytesPerSec();
   const disk = getDiskPercent();
   const gpu = await getGpuMetrics();
 

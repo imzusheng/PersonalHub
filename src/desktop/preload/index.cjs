@@ -2,10 +2,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const api = {
   getStatus: () => ipcRenderer.invoke('ph:getStatus'),
+  getMetrics: () => ipcRenderer.invoke('ph:getMetrics'),
   runAgentTick: () => ipcRenderer.invoke('ph:runAgentTick'),
   startAgent: () => ipcRenderer.invoke('ph:startAgent'),
   stopAgent: () => ipcRenderer.invoke('ph:stopAgent'),
   getPlugins: () => ipcRenderer.invoke('ph:getPlugins'),
+  importPlugin: () => ipcRenderer.invoke('ph:importPlugin'),
+  copyText: (value) => ipcRenderer.invoke('ph:copyText', value),
   setPluginEnabled: (pluginId, enabled) => ipcRenderer.invoke('ph:setPluginEnabled', pluginId, enabled),
   deletePlugin: (pluginId) => ipcRenderer.invoke('ph:deletePlugin', pluginId),
   getTasks: () => ipcRenderer.invoke('ph:getTasks'),

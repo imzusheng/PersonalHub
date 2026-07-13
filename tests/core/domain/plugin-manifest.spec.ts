@@ -47,6 +47,20 @@ describe('plugin-manifest', () => {
     }
   });
 
+  it('accepts schemaVersion 1 with deployment metadata', () => {
+    const result = parsePluginManifest({
+      ...validManifest,
+      schemaVersion: 1,
+      deployment: { type: 'dockerfile', dockerfile: 'Dockerfile', context: '.' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.deployment?.type).toBe('dockerfile');
+  });
+
+  it('keeps legacy manifests compatible when schemaVersion is omitted', () => {
+    expect(parsePluginManifest(validManifest).success).toBe(true);
+  });
+
   it('fails when id is missing', () => {
     const { id: _, ...rest } = validManifest;
     const result = parsePluginManifest(rest);
